@@ -1,0 +1,335 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  MERCHANT
+  ADMIN
+}
+
+enum AuthMethod {
+  PHONE
+  GOOGLE
+  FACEBOOK
+}
+
+enum CashRequestStatus {
+  PENDING
+  SETTLED
+  REJECTED
+}
+
+enum RedemptionStatus {
+  PENDING
+  FULFILLED
+  REJECTED
+}
+
+enum SettlementStatus {
+  OPEN
+  SETTLED
+}
+
+enum PointsEntryType {
+  INVOICE_EARN
+  CASH_RESERVE
+  CASH_RELEASE
+  CASH_SETTLE
+  PRODUCT_REDEEM
+  ADMIN_GRANT
+  ADMIN_DEDUCT
+}
+
+enum BannerPlacement {
+  HOME
+}
+
+enum BannerStyle {
+  PROMO
+  FEATURE
+  HIGHLIGHT
+}
+
+model User {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  role          UserRole
+  email         String?      @unique
+  phone         String?      @unique
+  passwordHash  String?
+  authMethod    AuthMethod?
+  oauthProvider AuthMethod?
+  oauthSubject  String?
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  customer        CustomerProfile?
+  merchantAccount MerchantAccount?
+  adminProfile    AdminProfile?
+  otpChallenges   OtpChallenge[]
+  refreshTokens   RefreshToken[]
+
+  @@unique([oauthProvider, oauthSubject])
+  @@index([role])
+}
+
+model CustomerProfile {
+  userId        String   @id @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  governorate   String
+  governorateId String?  @db.Uuid
+  pointsBalance BigInt   @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  governorateRecord Governorate? @relation(fields: [governorateId], references: [id], onDelete: SetNull)
+
+  transactions           LoyaltyTransaction[]
+  pointsLedger           PointsLedgerEntry[]
+  productRedemptions     ProductRedemption[]
+  cashRedemptionRequests CashRedemptionRequest[]
+
+  @@index([governorate])
+  @@index([governorateId])
+}
+
+model Governorate {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameAr       String   @unique
+  isActive     Boolean  @default(false)
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customers CustomerProfile[]
+  banners   Banner[]
+
+  @@index([isActive, displayOrder])
+}
+
+model Banner {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title        String
+  subtitle     String?
+  imageUrl     String
+  targetUrl    String?
+  placement    BannerPlacement @default(HOME)
+  style        BannerStyle     @default(PROMO)
+  isActive     Boolean         @default(true)
+  displayOrder Int             @default(0)
+  startsAt     DateTime?
+  endsAt       DateTime?
+  governorateId String?         @db.Uuid
+  governorate  Governorate?    @relation(fields: [governorateId], references: [id], onDelete: SetNull)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([placement, isActive, displayOrder])
+  @@index([governorateId, placement, isActive])
+}
+
+model Store {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  category       String
+  city           String
+  commissionRate Decimal  @db.Decimal(5, 2)
+  description    String   @default("")
+  location       String   @default("")
+  imageUrl       String?
+  iconSeed       Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  merchantAccounts MerchantAccount[]
+  transactions     LoyaltyTransaction[]
+  settlements      MerchantSettlement[]
+
+  @@index([city, category])
+  @@index([isActive])
+}
+
+model MerchantAccount {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @unique @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId      String   @db.Uuid
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  displayLabel String   @default("Primary account")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  devices      MerchantDevice[]
+  transactions LoyaltyTransaction[]
+
+  @@index([storeId])
+}
+
+model MerchantDevice {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantAccountId     String          @db.Uuid
+  merchantAccount       MerchantAccount @relation(fields: [merchantAccountId], references: [id], onDelete: Cascade)
+  deviceLabel           String
+  deviceFingerprintHash String
+  lastLoginAt           DateTime        @default(now())
+  createdAt             DateTime        @default(now())
+
+  @@unique([merchantAccountId, deviceFingerprintHash])
+}
+
+model AdminProfile {
+  userId      String   @id @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model PlatformSettings {
+  id            Int      @id @default(1)
+  pointValueSyp Int
+  updatedAt     DateTime @updatedAt
+}
+
+model LoyaltyTransaction {
+  id                     String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId                String          @db.Uuid
+  store                  Store           @relation(fields: [storeId], references: [id])
+  customerId             String          @db.Uuid
+  customer               CustomerProfile @relation(fields: [customerId], references: [userId])
+  merchantAccountId      String          @db.Uuid
+  merchantAccount        MerchantAccount @relation(fields: [merchantAccountId], references: [id])
+  amountSyp              BigInt
+  commissionRateSnapshot Decimal         @db.Decimal(5, 2)
+  commissionAmountSyp    BigInt
+  platformRevenueSyp     BigInt
+  customerShareSyp       BigInt
+  pointValueSypSnapshot  Int
+  customerPointsEarned   BigInt
+  idempotencyKey         String          @unique @db.Uuid
+  createdAt              DateTime        @default(now())
+
+  pointsLedger PointsLedgerEntry[]
+
+  @@index([customerId, createdAt])
+  @@index([storeId, createdAt])
+  @@index([merchantAccountId, createdAt])
+}
+
+model PointsLedgerEntry {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId    String              @db.Uuid
+  customer      CustomerProfile     @relation(fields: [customerId], references: [userId], onDelete: Cascade)
+  entryType     PointsEntryType
+  pointsDelta   BigInt
+  balanceAfter  BigInt
+  transactionId String?             @db.Uuid
+  transaction   LoyaltyTransaction? @relation(fields: [transactionId], references: [id])
+  referenceId   String?             @db.Uuid
+  note          String?
+  createdAt     DateTime            @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+model DigitalProduct {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String
+  costInPoints        BigInt
+  imageUrl            String?
+  iconSeed            Int      @default(0)
+  requiresPhoneNumber Boolean  @default(false)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  redemptions ProductRedemption[]
+
+  @@index([isActive])
+}
+
+model ProductRedemption {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId         String           @db.Uuid
+  customer           CustomerProfile  @relation(fields: [customerId], references: [userId])
+  productId          String           @db.Uuid
+  product            DigitalProduct   @relation(fields: [productId], references: [id])
+  pointsCostSnapshot BigInt
+  phoneNumber        String?
+  status             RedemptionStatus @default(PENDING)
+  fulfilledAt        DateTime?
+  createdAt          DateTime         @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([productId])
+}
+
+model CashRedemptionRequest {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId            String            @db.Uuid
+  customer              CustomerProfile   @relation(fields: [customerId], references: [userId])
+  pointsRequested       BigInt
+  pointValueSypSnapshot Int
+  cashValueSyp          BigInt
+  status                CashRequestStatus @default(PENDING)
+  settledByUserId       String?           @db.Uuid
+  settledAt             DateTime?
+  createdAt             DateTime          @default(now())
+
+  @@index([customerId, status])
+  @@index([status, createdAt])
+}
+
+model MerchantSettlement {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId          String           @db.Uuid
+  store            Store            @relation(fields: [storeId], references: [id])
+  periodStart      DateTime
+  periodEnd        DateTime
+  transactionCount Int              @default(0)
+  totalSalesSyp    BigInt           @default(0)
+  commissionDueSyp BigInt           @default(0)
+  status           SettlementStatus @default(OPEN)
+  settledByUserId  String?          @db.Uuid
+  settledAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([storeId, periodStart, periodEnd])
+  @@index([periodStart, periodEnd])
+}
+
+model OtpChallenge {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String?   @db.Uuid
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}

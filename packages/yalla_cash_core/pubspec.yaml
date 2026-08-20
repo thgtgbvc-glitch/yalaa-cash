@@ -1,0 +1,31 @@
+name: yalla_cash_core
+description: Shared models, business rules, demo repository, and theme for Yalla Cash.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  equatable: ^2.0.7
+  flutter_bloc: ^9.1.1
+  flutter_secure_storage: ^9.2.4
+  http: ^1.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/yalla_cash_logo.png
+    - assets/images/yalla_cash_mark.png
+  fonts:
+    - family: Almarai
+      fonts:
+        - asset: assets/fonts/Almarai-ExtraBold.ttf
+          weight: 800

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: yalla-cash-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yalla_cash
+      POSTGRES_USER: yalla_cash
+      POSTGRES_PASSWORD: yalla_cash
+    ports:
+      - "5432:5432"
+    volumes:
+      - yalla_cash_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yalla_cash -d yalla_cash"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  yalla_cash_pgdata:

@@ -1,0 +1,259 @@
+import 'package:yalla_cash_core/src/data/auth_token_store.dart';
+import 'package:yalla_cash_core/src/models.dart';
+
+enum YallaUserRole { customer, merchant, admin }
+
+enum LoadStatus { initial, loading, success, empty, failure }
+
+class PhoneOtpChallenge {
+  const PhoneOtpChallenge({
+    required this.challengeId,
+    required this.expiresInSeconds,
+    this.devCode,
+  });
+
+  final String challengeId;
+  final int expiresInSeconds;
+  final String? devCode;
+}
+
+class AuthSession {
+  const AuthSession({
+    required this.userId,
+    required this.role,
+    required this.tokens,
+    this.customer,
+  });
+
+  final String userId;
+  final YallaUserRole role;
+  final AuthTokens tokens;
+  final Customer? customer;
+}
+
+class PointsSummary {
+  const PointsSummary({
+    required this.pointsBalance,
+    required this.heldPoints,
+    required this.availablePoints,
+  });
+
+  final int pointsBalance;
+  final int heldPoints;
+  final int availablePoints;
+}
+
+class CustomerQrToken {
+  const CustomerQrToken({
+    required this.token,
+    required this.payload,
+    required this.expiresAt,
+  });
+
+  final String token;
+  final String payload;
+  final DateTime expiresAt;
+}
+
+class MerchantSummary {
+  const MerchantSummary({
+    required this.storeId,
+    required this.from,
+    required this.to,
+    required this.transactionCount,
+    required this.totalSalesSyp,
+    required this.commissionDueSyp,
+  });
+
+  final String storeId;
+  final DateTime from;
+  final DateTime to;
+  final int transactionCount;
+  final int totalSalesSyp;
+  final int commissionDueSyp;
+}
+
+class MerchantWorkspaceSnapshot {
+  const MerchantWorkspaceSnapshot({
+    required this.account,
+    required this.store,
+    required this.summary,
+    required this.recentTransactions,
+  });
+
+  final MerchantAccount account;
+  final PartnerStore store;
+  final MerchantSummary summary;
+  final List<LoyaltyTransaction> recentTransactions;
+}
+
+class AdminOverviewSnapshot {
+  const AdminOverviewSnapshot({
+    required this.customers,
+    required this.activeStores,
+    required this.transactions,
+    required this.totalSalesSyp,
+    required this.platformRevenueSyp,
+    required this.commissionDueSyp,
+    required this.pendingCashRequests,
+  });
+
+  final int customers;
+  final int activeStores;
+  final int transactions;
+  final int totalSalesSyp;
+  final int platformRevenueSyp;
+  final int commissionDueSyp;
+  final int pendingCashRequests;
+}
+
+class MerchantSettlementSummary {
+  const MerchantSettlementSummary({
+    required this.storeId,
+    required this.storeName,
+    required this.periodStart,
+    required this.periodEnd,
+    required this.transactionCount,
+    required this.totalSalesSyp,
+    required this.commissionDueSyp,
+    required this.status,
+    this.id,
+    this.settledAt,
+  });
+
+  final String? id;
+  final String storeId;
+  final String storeName;
+  final DateTime periodStart;
+  final DateTime periodEnd;
+  final int transactionCount;
+  final int totalSalesSyp;
+  final int commissionDueSyp;
+  final String status;
+  final DateTime? settledAt;
+}
+
+class IssuedMerchantAccount {
+  const IssuedMerchantAccount({
+    required this.account,
+    required this.temporaryPassword,
+  });
+
+  final MerchantAccount account;
+  final String temporaryPassword;
+}
+
+abstract class YallaCashRepository {
+  Future<PhoneOtpChallenge> startCustomerPhoneOtp(String phone);
+
+  Future<AuthSession> verifyCustomerPhoneOtp({
+    required String challengeId,
+    required String phone,
+    required String code,
+    required String name,
+    required String governorate,
+  });
+
+  Future<AuthSession> signInCustomerWithOAuth({
+    required AuthMethod provider,
+    required String firebaseIdToken,
+    required String name,
+    required String governorate,
+  });
+
+  Future<AuthSession> signInMerchant({
+    required String email,
+    required String password,
+  });
+
+  Future<AuthSession> signInAdmin({
+    required String email,
+    required String password,
+  });
+
+  Future<void> logout();
+
+  Future<Customer> getCustomerProfile();
+  Future<Customer> updateCustomerProfile({
+    required String name,
+    required String governorate,
+    String? phone,
+  });
+  Future<List<Governorate>> listActiveGovernorates();
+  Future<Customer> updateCustomerGovernorate(String governorateId);
+  Future<List<Banner>> listActiveBanners({String? placement, String? governorateId});
+  Future<PointsSummary> getCustomerPoints();
+  Future<CustomerQrToken> issueCustomerQrToken();
+  Future<List<PartnerStore>> listActiveStores({String? city, String? category});
+  Future<List<LoyaltyTransaction>> listCustomerTransactions({String? cursor});
+  Future<List<DigitalProduct>> listDigitalProducts();
+  Future<List<CashRedemptionRequest>> listCustomerCashRequests();
+  Future<CashRedemptionRequest> requestCashRedemption(int points);
+  Future<void> redeemDigitalProduct({
+    required DigitalProduct product,
+    String? phoneNumber,
+  });
+
+  Future<MerchantWorkspaceSnapshot> getMerchantWorkspace();
+  Future<void> registerMerchantDevice({
+    required String fingerprint,
+    required String label,
+  });
+  Future<Customer> resolveCustomerQr(String payload);
+  Future<LoyaltyTransaction> registerInvoice({
+    required String customerQrPayload,
+    required int amountSyp,
+    required String idempotencyKey,
+  });
+  Future<MerchantSummary> getMerchantSummary({DateTime? from, DateTime? to});
+  Future<List<LoyaltyTransaction>> listMerchantTransactions({String? cursor});
+
+  Future<AdminOverviewSnapshot> getAdminOverview();
+  Future<List<Customer>> listAdminCustomers();
+  Future<Customer> grantCustomerPoints({
+    required String customerId,
+    required int points,
+    required String note,
+  });
+  Future<Customer> deductCustomerPoints({
+    required String customerId,
+    required int points,
+    required String note,
+  });
+  Future<void> deleteCustomer(String customerId);
+  Future<List<Governorate>> listAdminGovernorates();
+  Future<List<Banner>> listAdminBanners({String? placement});
+  Future<Banner> createBanner(Banner banner);
+  Future<Banner> updateBanner(Banner banner);
+  Future<Governorate> createGovernorate(Governorate governorate);
+  Future<Governorate> updateGovernorate(Governorate governorate);
+  Future<List<CashRedemptionRequest>> listAdminCashRequests({String? status});
+  Future<CashRedemptionRequest> resolveCashRequest({
+    required String requestId,
+    required bool approve,
+  });
+  Future<List<PartnerStore>> listAdminStores();
+  Future<PartnerStore> createStore(PartnerStore store);
+  Future<PartnerStore> updateStore(PartnerStore store);
+  Future<List<DigitalProduct>> listAdminProducts();
+  Future<DigitalProduct> createProduct(DigitalProduct product);
+  Future<DigitalProduct> updateProduct(DigitalProduct product);
+  Future<List<MerchantAccount>> listMerchantAccounts();
+  Future<IssuedMerchantAccount> createMerchantAccount({
+    required String storeId,
+    required String email,
+    String? password,
+    String? displayLabel,
+  });
+  Future<int> getPointValue();
+  Future<int> updatePointValue(int pointValueSyp);
+  Future<List<MerchantSettlementSummary>> listSettlements({
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  });
+  Future<MerchantSettlementSummary> settleStore({
+    required String storeId,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+  });
+}

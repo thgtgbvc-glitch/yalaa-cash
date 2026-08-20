@@ -1,0 +1,462 @@
+import 'package:yalla_cash_core/src/data/auth_token_store.dart';
+import 'package:yalla_cash_core/src/core/failure.dart';
+import 'package:yalla_cash_core/src/domain/yalla_cash_repository.dart';
+import 'package:yalla_cash_core/src/in_memory_store.dart';
+import 'package:yalla_cash_core/src/models.dart';
+
+class InMemoryYallaCashRepository implements YallaCashRepository {
+  InMemoryYallaCashRepository(this._store);
+
+  final YallaCashStore _store;
+
+  @override
+  Future<PhoneOtpChallenge> startCustomerPhoneOtp(String phone) async =>
+      const PhoneOtpChallenge(
+        challengeId: 'demo-otp',
+        expiresInSeconds: 300,
+        devCode: '000000',
+      );
+
+  @override
+  Future<AuthSession> verifyCustomerPhoneOtp({
+    required String challengeId,
+    required String phone,
+    required String code,
+    required String name,
+    required String governorate,
+  }) async {
+    if (challengeId != 'demo-otp' || code != '000000') {
+      throw const YallaCashFailure(
+        code: 'invalid_otp',
+        message: 'رمز التحقق غير صحيح.',
+      );
+    }
+    _store.registerCustomer(
+      name: name,
+      governorate: governorate,
+      authMethod: AuthMethod.phone,
+      phone: phone,
+    );
+    return AuthSession(
+      userId: _store.currentCustomer!.id,
+      role: YallaUserRole.customer,
+      tokens: _demoTokens(),
+      customer: _store.currentCustomer,
+    );
+  }
+
+  @override
+  Future<AuthSession> signInCustomerWithOAuth({
+    required AuthMethod provider,
+    required String firebaseIdToken,
+    required String name,
+    required String governorate,
+  }) async {
+    _store.registerCustomer(
+      name: name,
+      governorate: governorate,
+      authMethod: provider,
+    );
+    return AuthSession(
+      userId: _store.currentCustomer!.id,
+      role: YallaUserRole.customer,
+      tokens: _demoTokens(),
+      customer: _store.currentCustomer,
+    );
+  }
+
+  @override
+  Future<AuthSession> signInMerchant({required String email, required String password}) async {
+    if (!_store.loginMerchant(email, password)) {
+      throw const YallaCashFailure(
+        code: 'invalid_credentials',
+        message: 'بيانات دخول المحل غير صحيحة.',
+      );
+    }
+    return AuthSession(
+      userId: _store.currentMerchant!.id,
+      role: YallaUserRole.merchant,
+      tokens: _demoTokens(),
+    );
+  }
+
+  @override
+  Future<AuthSession> signInAdmin({required String email, required String password}) async {
+    if (email.trim().toLowerCase() != 'admin@yallacash.app' || password != 'admin123') {
+      throw const YallaCashFailure(
+        code: 'invalid_credentials',
+        message: 'بيانات دخول الإدارة غير صحيحة.',
+      );
+    }
+    return AuthSession(
+      userId: 'admin-demo',
+      role: YallaUserRole.admin,
+      tokens: _demoTokens(),
+    );
+  }
+
+  @override
+  Future<void> logout() async {
+    _store.logoutCustomer();
+    _store.logoutMerchant();
+  }
+
+  @override
+  Future<Customer> getCustomerProfile() async => _store.currentCustomer!;
+
+  @override
+  Future<Customer> updateCustomerProfile({
+    required String name,
+    required String governorate,
+    String? phone,
+  }) async =>
+      _store.currentCustomer!;
+
+  @override
+  Future<List<Governorate>> listActiveGovernorates() async => _store.governorates
+      .where((item) => item.isActive)
+      .toList()
+    ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+
+  @override
+  Future<List<Banner>> listActiveBanners({String? placement, String? governorateId}) async {
+    final now = DateTime.now();
+    return _store.banners.where((banner) {
+      final targetPlacement = placement == null || banner.placement.toLowerCase() == placement.toLowerCase();
+      final activeWindow = (banner.startsAt == null || !banner.startsAt!.isAfter(now)) &&
+          (banner.endsAt == null || !banner.endsAt!.isBefore(now));
+      final governorateMatches = banner.governorateId == null || banner.governorateId == governorateId;
+      return banner.isActive && targetPlacement && activeWindow && governorateMatches;
+    }).toList()
+      ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+  }
+
+  @override
+  Future<Customer> updateCustomerGovernorate(String governorateId) async {
+    _store.updateCustomerGovernorate(governorateId);
+    return _store.currentCustomer!;
+  }
+
+  @override
+  Future<PointsSummary> getCustomerPoints() async {
+    final customer = _store.currentCustomer!;
+    final available = _store.availablePoints(customer.id);
+    return PointsSummary(
+      pointsBalance: customer.pointsBalance,
+      heldPoints: customer.pointsBalance - available,
+      availablePoints: available,
+    );
+  }
+
+  @override
+  Future<CustomerQrToken> issueCustomerQrToken() async {
+    final customer = _store.currentCustomer!;
+    return CustomerQrToken(
+      token: 'demo-only',
+      payload: _store.customerQrPayload(customer.id),
+      expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+    );
+  }
+
+  @override
+  Future<List<PartnerStore>> listActiveStores({String? city, String? category}) async =>
+      _store.stores
+          .where((store) => store.isActive && (category == null || store.category == category))
+          .toList(growable: false);
+
+  @override
+  Future<List<LoyaltyTransaction>> listCustomerTransactions({String? cursor}) async =>
+      _store.transactionsForCustomer(_store.currentCustomer!.id);
+
+  @override
+  Future<List<DigitalProduct>> listDigitalProducts() async =>
+      _store.products.where((product) => product.isActive).toList(growable: false);
+
+  @override
+  Future<List<CashRedemptionRequest>> listCustomerCashRequests() async =>
+      _store.cashRequests
+          .where((request) => request.customerId == _store.currentCustomer!.id)
+          .toList(growable: false);
+
+  @override
+  Future<CashRedemptionRequest> requestCashRedemption(int points) async =>
+      _store.requestCashRedemption(
+        customerId: _store.currentCustomer!.id,
+        points: points,
+      );
+
+  @override
+  Future<void> redeemDigitalProduct({
+    required DigitalProduct product,
+    String? phoneNumber,
+  }) async {
+    _store.redeemProduct(
+      customerId: _store.currentCustomer!.id,
+      product: product,
+      phoneNumber: phoneNumber,
+    );
+  }
+
+  @override
+  Future<MerchantWorkspaceSnapshot> getMerchantWorkspace() async {
+    final store = _store.currentMerchantStore!;
+    final transactions = _store.transactionsForStore(store.id);
+    final sales = transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
+    final commission = transactions.fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
+    return MerchantWorkspaceSnapshot(
+      account: _store.currentMerchant!,
+      store: store,
+      summary: MerchantSummary(
+        storeId: store.id,
+        from: DateTime(DateTime.now().year, DateTime.now().month),
+        to: DateTime(DateTime.now().year, DateTime.now().month + 1),
+        transactionCount: transactions.length,
+        totalSalesSyp: sales,
+        commissionDueSyp: commission,
+      ),
+      recentTransactions: transactions.take(8).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<void> registerMerchantDevice({required String fingerprint, required String label}) async {}
+
+  @override
+  Future<Customer> resolveCustomerQr(String payload) async {
+    final customerId = _store.customerIdFromQr(payload);
+    if (customerId == null) {
+      throw const YallaCashFailure(
+        code: 'invalid_qr',
+        message: 'الكود غير صالح أو منتهي الصلاحية.',
+      );
+    }
+    return _store.customerById(customerId);
+  }
+
+  @override
+  Future<LoyaltyTransaction> registerInvoice({
+    required String customerQrPayload,
+    required int amountSyp,
+    required String idempotencyKey,
+  }) async {
+    final customerId = _store.customerIdFromQr(customerQrPayload);
+    if (customerId == null) {
+      throw const YallaCashFailure(
+        code: 'invalid_qr',
+        message: 'الكود غير صالح أو منتهي الصلاحية.',
+      );
+    }
+    return _store.registerInvoice(
+      customerId: customerId,
+      storeId: _store.currentMerchantStore!.id,
+      amountSyp: amountSyp,
+    );
+  }
+
+  @override
+  Future<MerchantSummary> getMerchantSummary({DateTime? from, DateTime? to}) async =>
+      (await getMerchantWorkspace()).summary;
+
+  @override
+  Future<List<LoyaltyTransaction>> listMerchantTransactions({String? cursor}) async =>
+      _store.transactionsForStore(_store.currentMerchantStore!.id);
+
+  @override
+  Future<AdminOverviewSnapshot> getAdminOverview() async {
+    final sales = _store.transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
+    final revenue = _store.transactions.fold<int>(0, (sum, item) => sum + item.platformRevenueSyp);
+    final commission = _store.transactions.fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
+    return AdminOverviewSnapshot(
+      customers: _store.customers.length,
+      activeStores: _store.stores.where((store) => store.isActive).length,
+      transactions: _store.transactions.length,
+      totalSalesSyp: sales,
+      platformRevenueSyp: revenue,
+      commissionDueSyp: commission,
+      pendingCashRequests: _store.cashRequests
+          .where((request) => request.status == CashRequestStatus.pending)
+          .length,
+    );
+  }
+
+  @override
+  Future<List<Customer>> listAdminCustomers() async => _store.customers.toList(growable: false);
+
+  @override
+  Future<Customer> grantCustomerPoints({
+    required String customerId,
+    required int points,
+    required String note,
+  }) async {
+    _store.grantPoints(customerId, points);
+    return _store.customerById(customerId);
+  }
+
+  @override
+  Future<Customer> deductCustomerPoints({
+    required String customerId,
+    required int points,
+    required String note,
+  }) async {
+    _store.deductPoints(customerId, points);
+    return _store.customerById(customerId);
+  }
+
+  @override
+  Future<void> deleteCustomer(String customerId) async {
+    _store.removeCustomer(customerId);
+  }
+
+  @override
+  Future<List<Governorate>> listAdminGovernorates() async => _store.governorates.toList(growable: false);
+
+  @override
+  Future<List<Banner>> listAdminBanners({String? placement}) async => _store.banners
+      .where((item) => placement == null || item.placement.toLowerCase() == placement.toLowerCase())
+      .toList(growable: false)
+    ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+
+  @override
+  Future<Banner> createBanner(Banner banner) async {
+    _store.addBanner(banner);
+    return banner;
+  }
+
+  @override
+  Future<Banner> updateBanner(Banner banner) async {
+    _store.updateBanner(banner);
+    return banner;
+  }
+
+  @override
+  Future<Governorate> createGovernorate(Governorate governorate) async {
+    _store.addGovernorate(governorate);
+    return governorate;
+  }
+
+  @override
+  Future<Governorate> updateGovernorate(Governorate governorate) async {
+    _store.updateGovernorate(governorate);
+    return governorate;
+  }
+
+  @override
+  Future<List<CashRedemptionRequest>> listAdminCashRequests({String? status}) async =>
+      _store.cashRequests
+          .where((request) => status == null || request.status.name == status)
+          .toList(growable: false);
+
+  @override
+  Future<CashRedemptionRequest> resolveCashRequest({
+    required String requestId,
+    required bool approve,
+  }) async {
+    if (approve) {
+      _store.settleCashRequest(requestId);
+    } else {
+      _store.rejectCashRequest(requestId);
+    }
+    return _store.cashRequests.firstWhere((request) => request.id == requestId);
+  }
+
+  @override
+  Future<List<PartnerStore>> listAdminStores() async => _store.stores.toList(growable: false);
+
+  @override
+  Future<PartnerStore> createStore(PartnerStore store) async {
+    _store.addPartnerStore();
+    return _store.stores.last;
+  }
+
+  @override
+  Future<PartnerStore> updateStore(PartnerStore store) async {
+    _store.updatePartnerStore(store.id, store);
+    return store;
+  }
+
+  @override
+  Future<List<DigitalProduct>> listAdminProducts() async => _store.products.toList(growable: false);
+
+  @override
+  Future<DigitalProduct> createProduct(DigitalProduct product) async {
+    _store.addDigitalProduct();
+    return _store.products.last;
+  }
+
+  @override
+  Future<DigitalProduct> updateProduct(DigitalProduct product) async {
+    _store.updateDigitalProduct(product.id, product);
+    return product;
+  }
+
+  @override
+  Future<List<MerchantAccount>> listMerchantAccounts() async =>
+      _store.merchantAccounts.toList(growable: false);
+
+  @override
+  Future<IssuedMerchantAccount> createMerchantAccount({
+    required String storeId,
+    required String email,
+    String? password,
+    String? displayLabel,
+  }) async {
+    final account = _store.addMerchantAccount(storeId);
+    return IssuedMerchantAccount(
+      account: account,
+      temporaryPassword: account.demoPassword,
+    );
+  }
+
+  @override
+  Future<int> getPointValue() async => _store.pointValueSyp;
+
+  @override
+  Future<int> updatePointValue(int pointValueSyp) async {
+    _store.updatePointValue(pointValueSyp);
+    return _store.pointValueSyp;
+  }
+
+  @override
+  Future<List<MerchantSettlementSummary>> listSettlements({
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async {
+    final start = periodStart ?? DateTime(DateTime.now().year, DateTime.now().month);
+    final end = periodEnd ?? DateTime(DateTime.now().year, DateTime.now().month + 1);
+    return _store.stores.map((store) {
+      final transactions = _store.transactionsForStore(store.id);
+      final sales = transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
+      final commission =
+          transactions.fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
+      final settled = _store.settledStoreIds.contains(store.id);
+      return MerchantSettlementSummary(
+        storeId: store.id,
+        storeName: store.name,
+        periodStart: start,
+        periodEnd: end,
+        transactionCount: transactions.length,
+        totalSalesSyp: sales,
+        commissionDueSyp: commission,
+        status: settled ? 'settled' : 'open',
+        settledAt: settled ? DateTime.now() : null,
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<MerchantSettlementSummary> settleStore({
+    required String storeId,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+  }) async {
+    _store.toggleStoreSettlement(storeId);
+    return (await listSettlements(periodStart: periodStart, periodEnd: periodEnd))
+        .firstWhere((item) => item.storeId == storeId);
+  }
+
+  AuthTokens _demoTokens() => AuthTokens(
+        accessToken: 'demo-access-token',
+        refreshToken: 'demo-refresh-token',
+        expiresAt: DateTime.now().add(const Duration(days: 1)),
+      );
+}

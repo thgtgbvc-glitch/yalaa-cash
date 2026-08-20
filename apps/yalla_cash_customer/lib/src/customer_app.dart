@@ -1,0 +1,1708 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:yalla_cash_core/yalla_cash_core.dart' hide Banner;
+import 'package:yalla_cash_core/yalla_cash_core.dart' as core show Banner;
+
+class YallaCashCustomerApp extends StatefulWidget {
+  const YallaCashCustomerApp({super.key, this.store, this.runtime});
+
+  final YallaCashStore? store;
+  final YallaCashRuntime? runtime;
+
+  @override
+  State<YallaCashCustomerApp> createState() => _YallaCashCustomerAppState();
+}
+
+class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
+    with WidgetsBindingObserver {
+  late final YallaCashRuntime? runtime = widget.runtime ??
+      (widget.store == null ? YallaCashRuntime.fromEnvironment() : null);
+  late final YallaCashRepository repository = widget.store == null
+      ? runtime!.repository
+      : InMemoryYallaCashRepository(widget.store!);
+  late final CustomerAppCubit customerCubit = widget.store == null
+      ? runtime!.customerCubit()
+      : CustomerAppCubit(repository);
+  ThemeMode themeMode = ThemeMode.light;
+  bool restoringSession = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.store == null && runtime?.demoStore == null) {
+      restoringSession = true;
+      unawaited(_restoreSession());
+    }
+  }
+
+  Future<void> _restoreSession() async {
+    try {
+      await customerCubit.restoreSession();
+    } finally {
+      if (mounted) {
+        setState(() => restoringSession = false);
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        customerCubit.state.customer != null) {
+      unawaited(customerCubit.refresh());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    customerCubit.close();
+    if (widget.store == null && widget.runtime == null) {
+      runtime?.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<CustomerAppState>(
+      stream: customerCubit.stream,
+      initialData: customerCubit.state,
+      builder: (context, snapshot) {
+        final state = snapshot.data ?? customerCubit.state;
+        final restoring =
+            restoringSession && state.customer == null && state.session == null;
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'يلا كاش',
+          theme: buildYallaTheme(Brightness.light),
+          darkTheme: buildYallaTheme(Brightness.dark),
+          themeMode: themeMode,
+          builder: (context, child) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: restoring
+              ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+              : state.customer == null
+                  ? CustomerAuthScreen(
+                      cubit: customerCubit,
+                      state: state,
+                      showDemoLogin: widget.store != null,
+                      onDemoLogin: _loginDemoCustomer,
+                    )
+                  : CustomerGovernorateGate(
+                      cubit: customerCubit,
+                      state: state,
+                      repository: repository,
+                      darkMode: themeMode == ThemeMode.dark,
+                      onDarkModeChanged: (enabled) => setState(
+                        () => themeMode =
+                            enabled ? ThemeMode.dark : ThemeMode.light,
+                      ),
+                    ),
+        );
+      },
+    );
+  }
+
+  void _loginDemoCustomer() {
+    widget.store?.loginDemoCustomer();
+    unawaited(customerCubit.refresh());
+  }
+}
+
+class CustomerAuthScreen extends StatefulWidget {
+  const CustomerAuthScreen({
+    required this.cubit,
+    required this.state,
+    this.showDemoLogin = false,
+    this.onDemoLogin,
+    super.key,
+  });
+
+  final CustomerAppCubit cubit;
+  final CustomerAppState state;
+  final bool showDemoLogin;
+  final VoidCallback? onDemoLogin;
+
+  @override
+  State<CustomerAuthScreen> createState() => _CustomerAuthScreenState();
+}
+
+class _CustomerAuthScreenState extends State<CustomerAuthScreen>
+    with SingleTickerProviderStateMixin {
+  static const governorates = [
+    'دمشق',
+    'ريف دمشق',
+    'حلب',
+    'حمص',
+    'حماة',
+    'اللاذقية',
+    'طرطوس',
+    'إدلب',
+    'درعا',
+    'السويداء',
+    'القنيطرة',
+    'دير الزور',
+    'الرقة',
+    'الحسكة',
+  ];
+
+  AuthMethod? method;
+  _AuthStage stage = _AuthStage.options;
+  final nameController = TextEditingController();
+  final phoneController = TextEditingController();
+  final otpController = TextEditingController();
+  String? governorate;
+  PhoneOtpChallenge? otpChallenge;
+  String? errorMessage;
+  bool isLoading = false;
+  Timer? resendTimer;
+  int resendSeconds = 0;
+  late final AnimationController entranceController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2100),
+  );
+  late final Animation<double> logoFade = CurvedAnimation(
+    parent: entranceController,
+    curve: const Interval(0, .52, curve: Curves.easeOutCubic),
+  );
+  late final Animation<double> logoScale =
+      Tween<double>(begin: .65, end: 1).animate(logoFade);
+  late final Animation<double> logoVerticalShift =
+      Tween<double>(begin: 55, end: 0).animate(logoFade);
+  late final Animation<double> titleEntrance = _buttonEntrance(.16, .45);
+  bool entranceStarted = false;
+
+  Animation<double> _buttonEntrance(double start, double end) =>
+      CurvedAnimation(
+        parent: entranceController,
+        curve: Interval(start, end, curve: Curves.easeOutCubic),
+      );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (entranceStarted) return;
+    entranceStarted = true;
+    if (MediaQuery.accessibleNavigationOf(context)) {
+      entranceController.value = 1;
+    } else {
+      entranceController.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    phoneController.dispose();
+    otpController.dispose();
+    resendTimer?.cancel();
+    entranceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AnimatedBuilder(
+                    animation: logoVerticalShift,
+                    child: const Center(child: YallaCashLogo(height: 120)),
+                    builder: (context, logo) => Transform.translate(
+                      offset: Offset(0, -30 + logoVerticalShift.value),
+                      child: FadeTransition(
+                        opacity: logoFade,
+                        child: ScaleTransition(scale: logoScale, child: logo),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _Entrance(
+                    animation: titleEntrance,
+                    distance: 25,
+                    scaleBegin: 1,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'يلا كاش',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                color: scheme.primary,
+                              ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          method == null
+                              ? 'أنشئ حسابك وابدأ تجمع نقاطك'
+                              : 'أكمل بياناتك',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  if (method == null) ...[
+                    _Entrance(
+                      animation: _buttonEntrance(.32, .59),
+                      child: _AuthChoice(
+                        icon: Icons.facebook,
+                        label: 'المتابعة عبر فيسبوك',
+                        onTap: () => _showUnavailable(
+                            'تسجيل الدخول عبر فيسبوك غير مفعّل بعد. يلزم إعداد Firebase وربط تطبيق فيسبوك.'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _Entrance(
+                      animation: _buttonEntrance(.39, .66),
+                      child: _AuthChoice(
+                        icon: Icons.mail_outline_rounded,
+                        label: 'المتابعة عبر جيميل',
+                        onTap: () => _showUnavailable(
+                            'تسجيل الدخول عبر جوجل غير مفعّل بعد. يلزم إعداد Firebase وOAuth.'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _Entrance(
+                      animation: _buttonEntrance(.46, .73),
+                      child: _AuthChoice(
+                        icon: Icons.phone_android_rounded,
+                        label: 'المتابعة برقم الهاتف',
+                        onTap: () => setState(() {
+                          method = AuthMethod.phone;
+                          stage = _AuthStage.phone;
+                          errorMessage = null;
+                        }),
+                      ),
+                    ),
+                    if (widget.showDemoLogin && widget.onDemoLogin != null) ...[
+                      const SizedBox(height: 22),
+                      _Entrance(
+                        animation: _buttonEntrance(.56, .82),
+                        distance: 4,
+                        scaleBegin: .98,
+                        child: TextButton(
+                          key: const Key('demo-customer-login'),
+                          onPressed: widget.onDemoLogin,
+                          child: const Text('دخول سريع للعرض التجريبي'),
+                        ),
+                      ),
+                    ],
+                  ] else if (stage == _AuthStage.phone) ...[
+                    const Text(
+                      'أدخل رقم هاتفك لإرسال رمز التحقق',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: phoneController,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.done,
+                      onChanged: (_) => setState(() => errorMessage = null),
+                      decoration: const InputDecoration(
+                        labelText: 'رقم الهاتف',
+                        hintText: '09xxxxxxxx',
+                        prefixIcon: Icon(Icons.phone_android_rounded),
+                        prefixText: '+963  ',
+                      ),
+                    ),
+                    if (errorMessage != null) _ErrorMessage(errorMessage!),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: isLoading ? null : _continueToOtp,
+                      child: isLoading
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('إرسال رمز التحقق'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                        onPressed: _backToOptions, child: const Text('رجوع')),
+                  ] else if (stage == _AuthStage.otp) ...[
+                    Text(
+                      'تحقق من رقم ${phoneController.text.trim()}',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: otpController,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      maxLength: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'رمز التحقق',
+                        hintText: '000000',
+                        counterText: '',
+                        prefixIcon: Icon(Icons.lock_outline_rounded),
+                      ),
+                    ),
+                    _InfoMessage(_otpHelpMessage),
+                    if (errorMessage != null) _ErrorMessage(errorMessage!),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: isLoading ? null : _verifyOtp,
+                      child: isLoading
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('تحقق ودخول'),
+                    ),
+                    TextButton(
+                      onPressed:
+                          resendSeconds == 0 && !isLoading ? _resendOtp : null,
+                      child: Text(resendSeconds == 0
+                          ? 'إعادة إرسال الرمز'
+                          : 'إعادة الإرسال بعد $resendSeconds ث'),
+                    ),
+                    OutlinedButton(
+                        onPressed: _backToPhone,
+                        child: const Text('تغيير رقم الهاتف')),
+                  ] else ...[
+                    TextField(
+                      controller: nameController,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'الاسم الكامل',
+                        prefixIcon: Icon(Icons.person_outline_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: governorate,
+                      decoration: const InputDecoration(
+                        labelText: 'المحافظة',
+                        prefixIcon: Icon(Icons.location_on_outlined),
+                      ),
+                      items: governorates
+                          .map((item) =>
+                              DropdownMenuItem(value: item, child: Text(item)))
+                          .toList(),
+                      onChanged: (value) => setState(() => governorate = value),
+                    ),
+                    if (errorMessage != null) _ErrorMessage(errorMessage!),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: isLoading || !_canSubmit ? null : _submit,
+                      child: isLoading
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('إنشاء الحساب'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: _backToOptions,
+                      child: const Text('رجوع'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool get _canSubmit =>
+      nameController.text.trim().isNotEmpty &&
+      governorate != null &&
+      phoneController.text.trim().length >= 8 &&
+      otpChallenge != null &&
+      otpController.text.trim().isNotEmpty;
+
+  bool get _canContinuePhone => phoneController.text.trim().length >= 8;
+
+  String get _otpHelpMessage {
+    final devCode = otpChallenge?.devCode;
+    if (devCode != null && devCode.isNotEmpty) {
+      return 'رمز الاختبار: $devCode';
+    }
+    return 'أدخل رمز التحقق المرسل إلى هاتفك.';
+  }
+
+  Future<void> _continueToOtp() async {
+    if (!_canContinuePhone) {
+      setState(() =>
+          errorMessage = 'أدخل رقم هاتف صحيحاً مكوناً من 8 أرقام على الأقل.');
+      return;
+    }
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+      otpController.clear();
+    });
+    final challenge =
+        await widget.cubit.startPhoneOtp(phoneController.text.trim());
+    if (!mounted) return;
+    if (challenge == null) {
+      setState(() {
+        isLoading = false;
+        errorMessage = _customerFailureMessage(widget.cubit.state.failure);
+      });
+      return;
+    }
+    setState(() {
+      otpChallenge = challenge;
+      if (challenge.devCode?.isNotEmpty ?? false) {
+        otpController.text = challenge.devCode!;
+      }
+      stage = _AuthStage.otp;
+      isLoading = false;
+      errorMessage = null;
+    });
+  }
+
+  Future<void> _verifyOtp() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+    if (otpChallenge == null || otpController.text.trim().isEmpty) {
+      setState(() {
+        isLoading = false;
+        errorMessage = 'أدخل رمز التحقق الصحيح.';
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      isLoading = false;
+      stage = _AuthStage.details;
+      errorMessage = null;
+    });
+  }
+
+  Future<void> _resendOtp() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+      resendSeconds = 30;
+    });
+    final challenge =
+        await widget.cubit.startPhoneOtp(phoneController.text.trim());
+    if (!mounted) return;
+    if (challenge == null) {
+      setState(() {
+        isLoading = false;
+        resendSeconds = 0;
+        errorMessage = _customerFailureMessage(widget.cubit.state.failure);
+      });
+      return;
+    }
+    setState(() {
+      isLoading = false;
+      otpChallenge = challenge;
+      if (challenge.devCode?.isNotEmpty ?? false) {
+        otpController.text = challenge.devCode!;
+      }
+    });
+    resendTimer?.cancel();
+    resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || resendSeconds <= 1) {
+        timer.cancel();
+        if (mounted) setState(() => resendSeconds = 0);
+        return;
+      }
+      setState(() => resendSeconds--);
+    });
+  }
+
+  void _showUnavailable(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _backToOptions() => setState(() {
+        stage = _AuthStage.options;
+        method = null;
+        otpChallenge = null;
+        isLoading = false;
+        errorMessage = null;
+      });
+
+  void _backToPhone() => setState(() {
+        stage = _AuthStage.phone;
+        otpChallenge = null;
+        isLoading = false;
+        errorMessage = null;
+      });
+
+  Future<void> _submit() async {
+    final challenge = otpChallenge;
+    if (method == AuthMethod.phone && challenge == null) {
+      setState(() => errorMessage = 'ابدأ التحقق من رقم الهاتف مرة أخرى.');
+      return;
+    }
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+    await widget.cubit.verifyPhoneOtp(
+      challengeId: challenge?.challengeId ?? '',
+      phone: phoneController.text.trim(),
+      code: otpController.text.trim(),
+      name: nameController.text.trim(),
+      governorate: governorate!,
+    );
+    if (!mounted) return;
+    if (widget.cubit.state.customer == null) {
+      setState(() {
+        isLoading = false;
+        errorMessage = _customerFailureMessage(widget.cubit.state.failure);
+      });
+      return;
+    }
+    setState(() => isLoading = false);
+  }
+}
+
+class _AuthChoice extends StatelessWidget {
+  const _AuthChoice(
+      {required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(52),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 21),
+              const SizedBox(width: 10),
+              Text(label, textDirection: TextDirection.rtl),
+            ],
+          ),
+        ),
+      );
+}
+
+class _Entrance extends StatelessWidget {
+  const _Entrance(
+      {required this.animation,
+      required this.child,
+      this.distance = 30,
+      this.scaleBegin = .96});
+
+  final Animation<double> animation;
+  final Widget child;
+  final double distance;
+  final double scaleBegin;
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: Offset(0, distance / 52),
+            end: Offset.zero,
+          ).animate(animation),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: scaleBegin, end: 1).animate(animation),
+            child: child,
+          ),
+        ),
+      );
+}
+
+enum _AuthStage { options, phone, otp, details }
+
+class _InfoMessage extends StatelessWidget {
+  const _InfoMessage(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 12),
+        ),
+      );
+}
+
+class _ErrorMessage extends StatelessWidget {
+  const _ErrorMessage(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              color: Theme.of(context).colorScheme.error, fontSize: 12),
+        ),
+      );
+}
+
+class CustomerGovernorateGate extends StatefulWidget {
+  const CustomerGovernorateGate({
+    required this.cubit,
+    required this.state,
+    required this.repository,
+    required this.darkMode,
+    required this.onDarkModeChanged,
+    super.key,
+  });
+
+  final CustomerAppCubit cubit;
+  final CustomerAppState state;
+  final YallaCashRepository repository;
+  final bool darkMode;
+  final ValueChanged<bool> onDarkModeChanged;
+
+  @override
+  State<CustomerGovernorateGate> createState() =>
+      _CustomerGovernorateGateState();
+}
+
+class _CustomerGovernorateGateState extends State<CustomerGovernorateGate> {
+  List<Governorate> governorates = const [];
+  bool loading = true;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final items = await widget.repository.listActiveGovernorates();
+      final selectedId = widget.state.customer?.governorateId;
+      if (!mounted) return;
+      setState(() {
+        governorates = items.where((item) => item.isActive).toList()
+          ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+        loading = false;
+        error = null;
+      });
+      if (selectedId != null &&
+          governorates.any((item) => item.id == selectedId)) {
+        return;
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error = 'تعذر تحميل المحافظات المتاحة. حاول مرة أخرى.';
+      });
+    }
+  }
+
+  Future<void> _select(Governorate governorate) async {
+    setState(() => loading = true);
+    try {
+      await widget.cubit.updateGovernorate(governorate.id);
+      if (!mounted) return;
+      if (widget.cubit.state.failure != null) {
+        setState(() {
+          loading = false;
+          error = _customerFailureMessage(widget.cubit.state.failure);
+        });
+        return;
+      }
+      setState(() => loading = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error = 'تعذر حفظ المحافظة المختارة. حاول مرة أخرى.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = widget.state.customer?.governorateId;
+    final validSelection =
+        selectedId != null && governorates.any((item) => item.id == selectedId);
+    if (validSelection) {
+      return CustomerShell(
+        cubit: widget.cubit,
+        state: widget.state,
+        repository: widget.repository,
+        darkMode: widget.darkMode,
+        onDarkModeChanged: widget.onDarkModeChanged,
+      );
+    }
+    if (loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return GovernorateSelectionScreen(
+      governorates: governorates,
+      error: error,
+      onRetry: _load,
+      onSelected: _select,
+    );
+  }
+}
+
+class GovernorateSelectionScreen extends StatelessWidget {
+  const GovernorateSelectionScreen({
+    required this.governorates,
+    required this.onSelected,
+    this.error,
+    this.onRetry,
+    super.key,
+  });
+
+  final List<Governorate> governorates;
+  final String? error;
+  final Future<void> Function(Governorate) onSelected;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('المحافظة')),
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: ListView(
+                padding: const EdgeInsets.all(24),
+                children: [
+                  const SizedBox(height: 24),
+                  Text('اختر محافظتك',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 8),
+                  Text('اختر محافظتك وابدأ بجمع نقاطك',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant)),
+                  const SizedBox(height: 28),
+                  if (error != null) ...[
+                    Text(error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                        onPressed: onRetry,
+                        child: const Text('إعادة المحاولة')),
+                    const SizedBox(height: 12),
+                  ],
+                  if (governorates.isEmpty && error == null)
+                    const Text('لا توجد محافظات متاحة حالياً.',
+                        textAlign: TextAlign.center)
+                  else
+                    ...governorates.map(
+                      (governorate) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Card(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () => onSelected(governorate),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 18),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.location_on_outlined,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                      child: Text(governorate.nameAr,
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w800))),
+                                  const Icon(Icons.chevron_left_rounded),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
+class CustomerShell extends StatefulWidget {
+  const CustomerShell({
+    required this.cubit,
+    required this.state,
+    required this.repository,
+    required this.darkMode,
+    required this.onDarkModeChanged,
+    super.key,
+  });
+
+  final CustomerAppCubit cubit;
+  final CustomerAppState state;
+  final YallaCashRepository repository;
+  final bool darkMode;
+  final ValueChanged<bool> onDarkModeChanged;
+
+  @override
+  State<CustomerShell> createState() => _CustomerShellState();
+}
+
+class _CustomerShellState extends State<CustomerShell> {
+  var selectedIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final customer = widget.state.customer!;
+    final pages = [
+      CustomerHomePage(
+          state: widget.state,
+          customer: customer,
+          repository: widget.repository),
+      CustomerQrPage(
+          cubit: widget.cubit, state: widget.state, customer: customer),
+      CustomerWalletPage(
+          transactions: widget.state.transactions, customer: customer),
+      CustomerRewardsPage(cubit: widget.cubit, state: widget.state),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const YallaCashLogo(height: 34, markOnly: true),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('يلا كاش',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w900)),
+                Text(
+                  'مرحباً ${customer.name.split(' ').first}',
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      drawer: Drawer(
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              const ListTile(
+                leading:
+                    CircleAvatar(child: Icon(Icons.person_outline_rounded)),
+                title: Text('إعدادات الحساب',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('اللغة، المظهر والتواصل'),
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.location_on_outlined),
+                title: const Text('تغيير المحافظة'),
+                subtitle: Text(customer.governorate),
+                onTap: _changeGovernorate,
+              ),
+              SwitchListTile(
+                value: widget.darkMode,
+                onChanged: widget.onDarkModeChanged,
+                secondary: const Icon(Icons.dark_mode_outlined),
+                title: const Text('الوضع الداكن'),
+              ),
+              const ListTile(
+                  leading: Icon(Icons.language_rounded),
+                  title: Text('اللغة'),
+                  trailing: Text('العربية')),
+              const ListTile(
+                  leading: Icon(Icons.message_outlined),
+                  title: Text('تواصل معنا')),
+              const ListTile(
+                  leading: Icon(Icons.star_outline_rounded),
+                  title: Text('قيّم التطبيق')),
+              const ListTile(
+                  leading: Icon(Icons.share_outlined),
+                  title: Text('مشاركة التطبيق')),
+              const Divider(),
+              ListTile(
+                leading: Icon(Icons.logout_rounded,
+                    color: Theme.of(context).colorScheme.error),
+                title: Text('تسجيل الخروج',
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
+                onTap: widget.cubit.logout,
+              ),
+            ],
+          ),
+        ),
+      ),
+      body: SafeArea(
+        child: IndexedStack(index: selectedIndex, children: pages),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: selectedIndex,
+        onDestinationSelected: (index) => setState(() => selectedIndex = index),
+        destinations: const [
+          NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: 'الرئيسية'),
+          NavigationDestination(
+              icon: Icon(Icons.qr_code_2_rounded), label: 'كودي'),
+          NavigationDestination(
+              icon: Icon(Icons.account_balance_wallet_outlined),
+              label: 'المحفظة'),
+          NavigationDestination(
+              icon: Icon(Icons.redeem_outlined), label: 'المتجر'),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _changeGovernorate() async {
+    final governorates = await widget.repository.listActiveGovernorates();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => GovernorateSelectionScreen(
+          governorates: governorates,
+          onSelected: (governorate) async {
+            try {
+              await widget.cubit.updateGovernorate(governorate.id);
+              if (!context.mounted) return;
+              if (widget.cubit.state.failure == null) {
+                Navigator.of(context).pop();
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                    content: Text(
+                        _customerFailureMessage(widget.cubit.state.failure))),
+              );
+            } catch (_) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('تعذر حفظ المحافظة المختارة.')));
+              }
+            }
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class CustomerHomePage extends StatefulWidget {
+  const CustomerHomePage(
+      {required this.state,
+      required this.customer,
+      required this.repository,
+      super.key});
+
+  final CustomerAppState state;
+  final Customer customer;
+  final YallaCashRepository repository;
+
+  @override
+  State<CustomerHomePage> createState() => _CustomerHomePageState();
+}
+
+class _CustomerHomePageState extends State<CustomerHomePage> {
+  List<core.Banner> banners = const [];
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBanners();
+  }
+
+  @override
+  void didUpdateWidget(covariant CustomerHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.customer.governorateId != widget.customer.governorateId) {
+      _loadBanners();
+    }
+  }
+
+  Future<void> _loadBanners() async {
+    setState(() => loading = true);
+    try {
+      final items = await widget.repository.listActiveBanners(
+        placement: 'HOME',
+        governorateId: widget.customer.governorateId,
+      );
+      if (!mounted) return;
+      setState(() {
+        banners = items;
+        loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final points = widget.state.points;
+    final displayCustomer =
+        widget.customer.copyWith(pointsBalance: points?.pointsBalance);
+    final held = points?.heldPoints ?? 0;
+    final stores = widget.state.stores
+        .where((store) => store.isActive)
+        .toList(growable: false);
+    final bannerHeight = (MediaQuery.sizeOf(context).width * 0.37)
+        .clamp(148.0, 156.0)
+        .toDouble();
+    return ListView(
+      key: const PageStorageKey('customer-home'),
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
+      children: [
+        _BalanceCard(customer: displayCustomer, heldPoints: held),
+        const SizedBox(height: 18),
+        if (loading)
+          const Center(child: CircularProgressIndicator())
+        else if (banners.isNotEmpty)
+          SizedBox(
+            height: bannerHeight,
+            child: PageView.builder(
+              itemCount: banners.length,
+              itemBuilder: (context, index) {
+                final banner = banners[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(banner.imageUrl, fit: BoxFit.cover),
+                        Positioned.fill(
+                          child: Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: FractionallySizedBox(
+                              widthFactor: 0.72,
+                              alignment: AlignmentDirectional.centerStart,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: AlignmentDirectional.centerStart,
+                                    end: AlignmentDirectional.centerEnd,
+                                    colors: [
+                                      Colors.black.withValues(alpha: 0.42),
+                                      Colors.black.withValues(alpha: 0.18),
+                                      Colors.transparent,
+                                    ],
+                                    stops: const [0, 0.58, 1],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 18,
+                          bottom: 18,
+                          left: 18,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(banner.title,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.w900,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0x99000000),
+                                          blurRadius: 12,
+                                          offset: Offset(0, 2),
+                                        ),
+                                      ])),
+                              if (banner.subtitle != null)
+                                Text(banner.subtitle!,
+                                    style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                        shadows: [
+                                          Shadow(
+                                            color: Color(0x80000000),
+                                            blurRadius: 10,
+                                            offset: Offset(0, 1),
+                                          ),
+                                        ])),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 22),
+        const _SectionTitle('المحلات الحصرية بمدينتك'),
+        const SizedBox(height: 10),
+        if (stores.isEmpty)
+          const _EmptyState(
+              icon: Icons.storefront_outlined,
+              text: 'لا توجد محلات متاحة حالياً')
+        else
+          ...stores.map((partner) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _StoreCard(store: partner),
+              )),
+      ],
+    );
+  }
+}
+
+class _BalanceCard extends StatelessWidget {
+  const _BalanceCard({required this.customer, required this.heldPoints});
+
+  final Customer customer;
+  final int heldPoints;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [YallaColors.primaryStrong, YallaColors.primary],
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+                color: YallaColors.primary.withValues(alpha: .24),
+                blurRadius: 24,
+                offset: const Offset(0, 12)),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0,
+              top: 0,
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                    color: YallaColors.gold, shape: BoxShape.circle),
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: YallaCashLogo(
+                    height: 27,
+                    markOnly: true,
+                    color: YallaColors.navy,
+                  ),
+                ),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('رصيد النقاط',
+                    style: TextStyle(color: Colors.white70)),
+                const SizedBox(height: 4),
+                Text(
+                  formatNumber(customer.pointsBalance),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 38,
+                      fontWeight: FontWeight.w900),
+                ),
+                if (heldPoints > 0)
+                  Text('منها ${formatNumber(heldPoints)} نقطة قيد المعالجة',
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12)),
+              ],
+            ),
+          ],
+        ),
+      );
+}
+
+class _StoreCard extends StatelessWidget {
+  const _StoreCard({required this.store});
+
+  final PartnerStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final icons = [
+      Icons.restaurant_rounded,
+      Icons.shopping_cart_rounded,
+      Icons.coffee_rounded,
+      Icons.content_cut_rounded,
+      Icons.medication_rounded
+    ];
+    final colors = [
+      YallaColors.primaryStrong,
+      const Color(0xFF0E8C79),
+      const Color(0xFF8A5A26),
+      const Color(0xFFC7447A),
+      const Color(0xFF4C3FBF)
+    ];
+    final index = store.iconSeed % icons.length;
+    return Card(
+      child: ExpansionTile(
+        leading: CircleAvatar(
+          backgroundColor: colors[index],
+          foregroundColor: Colors.white,
+          child: Icon(icons[index], size: 20),
+        ),
+        title: Text(store.name,
+            style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(store.category),
+        trailing:
+            const Chip(label: Text('حصري', style: TextStyle(fontSize: 10))),
+        childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(store.description),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.location_on_outlined, size: 17),
+            const SizedBox(width: 5),
+            Text(store.location)
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+class CustomerQrPage extends StatefulWidget {
+  const CustomerQrPage({
+    required this.cubit,
+    required this.state,
+    required this.customer,
+    super.key,
+  });
+
+  final CustomerAppCubit cubit;
+  final CustomerAppState state;
+  final Customer customer;
+
+  @override
+  State<CustomerQrPage> createState() => _CustomerQrPageState();
+}
+
+class _CustomerQrPageState extends State<CustomerQrPage> {
+  bool requesting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ensureQrToken();
+  }
+
+  @override
+  void didUpdateWidget(covariant CustomerQrPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.customer.id != widget.customer.id ||
+        oldWidget.state.qrToken != widget.state.qrToken) {
+      _ensureQrToken();
+    }
+  }
+
+  void _ensureQrToken() {
+    final token = widget.state.qrToken;
+    final validUntil = DateTime.now().add(const Duration(seconds: 10));
+    if (requesting || (token != null && token.expiresAt.isAfter(validUntil))) {
+      return;
+    }
+    requesting = true;
+    widget.cubit.issueQrToken().whenComplete(() {
+      if (mounted) setState(() => requesting = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = widget.state.qrToken;
+    final failure = widget.state.failure;
+    return ListView(
+      padding: const EdgeInsets.all(22),
+      children: [
+        const _SectionTitle('كودك الشخصي'),
+        const SizedBox(height: 18),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(26),
+            child: Column(
+              children: [
+                Container(
+                  width: 246,
+                  height: 246,
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22)),
+                  child: token == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : QrImageView(
+                          data: token.payload,
+                          version: QrVersions.auto,
+                          size: 210,
+                          eyeStyle: const QrEyeStyle(
+                              eyeShape: QrEyeShape.square,
+                              color: YallaColors.navy),
+                          dataModuleStyle: const QrDataModuleStyle(
+                              dataModuleShape: QrDataModuleShape.square,
+                              color: YallaColors.navy),
+                        ),
+                ),
+                const SizedBox(height: 16),
+                Text(widget.customer.name,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800, fontSize: 16)),
+                Text('#${widget.customer.id}',
+                    style: Theme.of(context).textTheme.bodySmall),
+                if (token != null)
+                  Text('ينتهي في ${_formatTime(token.expiresAt)}',
+                      style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'اعرض هذا الكود على الكاشير عند الدفع، وستضاف نقاطك تلقائياً بعد تسجيل الفاتورة.',
+          textAlign: TextAlign.center,
+        ),
+        if (failure != null && token == null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _customerFailureMessage(failure),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _ensureQrToken,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('إعادة المحاولة'),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class CustomerWalletPage extends StatelessWidget {
+  const CustomerWalletPage(
+      {required this.transactions, required this.customer, super.key});
+
+  final List<LoyaltyTransaction> transactions;
+  final Customer customer;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        const _SectionTitle('سجل العمليات'),
+        const SizedBox(height: 10),
+        if (transactions.isEmpty)
+          const _EmptyState(
+              icon: Icons.receipt_long_outlined,
+              text: 'لا توجد عمليات حتى الآن')
+        else
+          ...transactions.map((transaction) => Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                child: ListTile(
+                  leading: const CircleAvatar(
+                      child: Icon(Icons.receipt_long_outlined)),
+                  title: Text(transaction.storeName,
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(
+                      '${formatDate(transaction.createdAt)} · فاتورة ${formatNumber(transaction.amountSyp)} ل.س'),
+                  trailing: Text(
+                    '+${formatNumber(transaction.customerPointsEarned)}',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w900),
+                  ),
+                ),
+              )),
+      ],
+    );
+  }
+}
+
+class CustomerRewardsPage extends StatefulWidget {
+  const CustomerRewardsPage(
+      {required this.cubit, required this.state, super.key});
+
+  final CustomerAppCubit cubit;
+  final CustomerAppState state;
+
+  @override
+  State<CustomerRewardsPage> createState() => _CustomerRewardsPageState();
+}
+
+class _CustomerRewardsPageState extends State<CustomerRewardsPage> {
+  final cashPointsController = TextEditingController();
+
+  @override
+  void dispose() {
+    cashPointsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final customer = widget.state.customer!;
+    final available =
+        widget.state.points?.availablePoints ?? customer.pointsBalance;
+    final requested = int.tryParse(cashPointsController.text) ?? 0;
+    final pointValue = _pointValueSyp(widget.state.cashRequests);
+    return ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('رصيدك المتاح'),
+              Text('${formatNumber(available)} نقطة',
+                  style: const TextStyle(
+                      fontSize: 26, fontWeight: FontWeight.w900)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 22),
+        const _SectionTitle('استبدال نقاط بكاش'),
+        const SizedBox(height: 10),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: cashPointsController,
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                      labelText: 'عدد النقاط',
+                      prefixIcon: Icon(Icons.savings_outlined)),
+                ),
+                const SizedBox(height: 10),
+                Text('القيمة: ${formatNumber(requested * pointValue)} ل.س'),
+                const SizedBox(height: 14),
+                FilledButton(
+                  onPressed: requested > 0 && requested <= available
+                      ? () => _requestCash(customer, requested)
+                      : null,
+                  child: const Text('إرسال طلب الاستبدال'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
+        const _SectionTitle('منتجات رقمية'),
+        const SizedBox(height: 10),
+        if (widget.state.products.isEmpty)
+          const _EmptyState(
+              icon: Icons.redeem_outlined, text: 'لا توجد منتجات متاحة حالياً')
+        else
+          ...widget.state.products.map((product) => Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                child: ListTile(
+                  leading:
+                      CircleAvatar(child: Icon(_productIcon(product.iconSeed))),
+                  title: Text(product.name,
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text('${formatNumber(product.costInPoints)} نقطة'),
+                  trailing: OutlinedButton(
+                    onPressed: available >= product.costInPoints
+                        ? () => _redeemProduct(customer, product)
+                        : null,
+                    child: const Text('استبدال'),
+                  ),
+                ),
+              )),
+      ],
+    );
+  }
+
+  Future<void> _requestCash(Customer customer, int points) async {
+    await widget.cubit.requestCashRedemption(points);
+    if (!mounted) return;
+    if (widget.cubit.state.failure != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(_customerFailureMessage(widget.cubit.state.failure))),
+      );
+      return;
+    }
+    cashPointsController.clear();
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم إرسال الطلب، وبانتظار محاسبة الإدارة.')),
+    );
+  }
+
+  Future<void> _redeemProduct(Customer customer, DigitalProduct product) async {
+    String? phone;
+    if (product.requiresPhoneNumber) {
+      final controller = TextEditingController();
+      phone = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('رقم الهاتف'),
+          content: TextField(
+              controller: controller,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(hintText: '09xxxxxxxx')),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: const Text('تأكيد')),
+          ],
+        ),
+      );
+      controller.dispose();
+      if (phone == null || phone.trim().length < 8) return;
+    }
+    await widget.cubit.redeemDigitalProduct(product, phoneNumber: phone);
+    if (!mounted) return;
+    if (widget.cubit.state.failure != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(_customerFailureMessage(widget.cubit.state.failure))),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تم طلب «${product.name}» بنجاح.')));
+  }
+
+  IconData _productIcon(int seed) => [
+        Icons.phone_android_rounded,
+        Icons.shopping_bag_outlined,
+        Icons.music_note_rounded,
+        Icons.wifi_rounded
+      ][seed % 4];
+
+  int _pointValueSyp(List<CashRedemptionRequest> requests) {
+    for (final request in requests) {
+      if (request.pointsRequested > 0) {
+        return request.cashValueSyp ~/ request.pointsRequested;
+      }
+    }
+    return 5;
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: Theme.of(context)
+            .textTheme
+            .titleMedium
+            ?.copyWith(fontWeight: FontWeight.w900),
+      );
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 64),
+        child: Column(
+          children: [
+            Icon(icon, size: 56, color: Theme.of(context).colorScheme.outline),
+            const SizedBox(height: 12),
+            Text(text),
+          ],
+        ),
+      );
+}
+
+String _formatTime(DateTime value) {
+  final hour = value.hour.toString().padLeft(2, '0');
+  final minute = value.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+String _customerFailureMessage(YallaCashFailure? failure) {
+  if (failure == null) return 'تعذر إكمال العملية. حاول مرة أخرى.';
+  if (failure.statusCode == 401 || failure.code == 'unauthorized') {
+    return 'انتهت الجلسة. سجّل الدخول مرة أخرى.';
+  }
+  if (failure.code == 'network_error') {
+    return 'تعذر الاتصال بالخادم. تحقق من الشبكة وحاول مجدداً.';
+  }
+  final message = failure.message.trim();
+  if (message.isEmpty) return 'تعذر إكمال العملية. حاول مرة أخرى.';
+  return message;
+}
