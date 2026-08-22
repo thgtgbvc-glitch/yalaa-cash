@@ -536,11 +536,46 @@ class AdminAppCubit extends Cubit<AdminAppState> {
     });
   }
 
+  Future<void> deleteCustomer(Customer customer) async {
+    await _run(() async {
+      await _repository.deleteCustomer(customer.id);
+      await refresh();
+    });
+  }
+
   Future<void> resolveCashRequest(
       CashRedemptionRequest request, bool approve) async {
     await _run(() async {
       await _repository.resolveCashRequest(
           requestId: request.id, approve: approve);
+      await refresh();
+    });
+  }
+
+  Future<void> createStore(PartnerStore store) async {
+    await _run(() async {
+      await _repository.createStore(store);
+      await refresh();
+    });
+  }
+
+  Future<void> updateStore(PartnerStore store) async {
+    await _run(() async {
+      await _repository.updateStore(store);
+      await refresh();
+    });
+  }
+
+  Future<void> createProduct(DigitalProduct product) async {
+    await _run(() async {
+      await _repository.createProduct(product);
+      await refresh();
+    });
+  }
+
+  Future<void> updateProduct(DigitalProduct product) async {
+    await _run(() async {
+      await _repository.updateProduct(product);
       await refresh();
     });
   }
@@ -565,6 +600,17 @@ class AdminAppCubit extends Cubit<AdminAppState> {
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
       return null;
     }
+  }
+
+  Future<void> settleStore(MerchantSettlementSummary settlement) async {
+    await _run(() async {
+      await _repository.settleStore(
+        storeId: settlement.storeId,
+        periodStart: settlement.periodStart,
+        periodEnd: settlement.periodEnd,
+      );
+      await refresh();
+    });
   }
 
   Future<void> updatePointValue(int pointValueSyp) async {

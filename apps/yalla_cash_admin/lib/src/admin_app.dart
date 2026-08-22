@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:yalla_cash_core/yalla_cash_core.dart' hide Banner;
 import 'package:yalla_cash_core/yalla_cash_core.dart' as core show Banner;
+
+const _adminPointAdjustmentNote = 'Admin adjustment';
 
 class YallaCashAdminApp extends StatefulWidget {
   const YallaCashAdminApp(
@@ -17,15 +21,22 @@ class YallaCashAdminApp extends StatefulWidget {
 class _YallaCashAdminAppState extends State<YallaCashAdminApp> {
   late final YallaCashRuntime? runtime = widget.runtime ??
       (widget.store == null ? YallaCashRuntime.fromEnvironment() : null);
-  late final YallaCashStore store =
-      widget.store ?? runtime!.demoStore ?? YallaCashStore.demo();
+  late final YallaCashStore? store = widget.store ?? runtime?.demoStore;
   late final YallaCashRepository repository =
-      runtime?.repository ?? InMemoryYallaCashRepository(store);
+      runtime?.repository ?? InMemoryYallaCashRepository(store!);
+  late final AdminAppCubit adminCubit = AdminAppCubit(repository);
   late bool authenticated = widget.skipLogin;
   var darkMode = false;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.skipLogin) unawaited(adminCubit.refresh());
+  }
+
+  @override
   void dispose() {
+    adminCubit.close();
     if (widget.store == null && widget.runtime == null) {
       runtime?.dispose();
     }
@@ -33,36 +44,56 @@ class _YallaCashAdminAppState extends State<YallaCashAdminApp> {
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-        animation: store,
-        builder: (context, _) => MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: 'لوحة تحكم يلا كاش',
-          theme: buildYallaTheme(Brightness.light),
-          darkTheme: buildYallaTheme(Brightness.dark),
-          themeMode: darkMode ? ThemeMode.dark : ThemeMode.light,
-          builder: (context, child) => Directionality(
-            textDirection: TextDirection.rtl,
-            child: child ?? const SizedBox.shrink(),
-          ),
-          home: authenticated
-              ? AdminShell(
-                  store: store,
-                  repository: repository,
-                  darkMode: darkMode,
-                  onDarkModeChanged: (value) =>
-                      setState(() => darkMode = value),
-                  onLogout: () => setState(() => authenticated = false),
-                )
-              : AdminLoginScreen(
-                  onAuthenticated: () => setState(() => authenticated = true)),
-        ),
+  Widget build(BuildContext context) => StreamBuilder<AdminAppState>(
+        stream: adminCubit.stream,
+        initialData: adminCubit.state,
+        builder: (context, snapshot) {
+          final state = snapshot.data ?? adminCubit.state;
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            title: 'لوحة تحكم يلا كاش',
+            theme: buildYallaTheme(Brightness.light),
+            darkTheme: buildYallaTheme(Brightness.dark),
+            themeMode: darkMode ? ThemeMode.dark : ThemeMode.light,
+            builder: (context, child) => Directionality(
+              textDirection: TextDirection.rtl,
+              child: child ?? const SizedBox.shrink(),
+            ),
+            home: authenticated
+                ? AdminShell(
+                    cubit: adminCubit,
+                    state: state,
+                    repository: repository,
+                    darkMode: darkMode,
+                    onDarkModeChanged: (value) =>
+                        setState(() => darkMode = value),
+                    onLogout: _logout,
+                  )
+                : AdminLoginScreen(
+                    cubit: adminCubit,
+                    state: state,
+                    onAuthenticated: () =>
+                        setState(() => authenticated = true)),
+          );
+        },
       );
+
+  Future<void> _logout() async {
+    await adminCubit.logout();
+    if (mounted) setState(() => authenticated = false);
+  }
 }
 
 class AdminLoginScreen extends StatefulWidget {
-  const AdminLoginScreen({required this.onAuthenticated, super.key});
+  const AdminLoginScreen({
+    required this.cubit,
+    required this.state,
+    required this.onAuthenticated,
+    super.key,
+  });
 
+  final AdminAppCubit cubit;
+  final AdminAppState state;
   final VoidCallback onAuthenticated;
 
   @override
@@ -73,6 +104,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final emailController = TextEditingController(text: 'admin@yallacash.app');
   final passwordController = TextEditingController(text: 'admin123');
   String? error;
+  bool submitting = false;
 
   @override
   void dispose() {
@@ -82,76 +114,89 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Center(child: YallaCashLogo(height: 112)),
-                      const SizedBox(height: 18),
-                      Text('لوحة تحكم يلا كاش',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 6),
-                      const Text('دخول الإدارة', textAlign: TextAlign.center),
-                      const SizedBox(height: 24),
-                      TextField(
-                        key: const Key('admin-email'),
-                        controller: emailController,
-                        textDirection: TextDirection.ltr,
-                        decoration: const InputDecoration(
-                            labelText: 'البريد الإلكتروني',
-                            prefixIcon: Icon(Icons.mail_outline_rounded)),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        key: const Key('admin-password'),
-                        controller: passwordController,
-                        obscureText: true,
-                        textDirection: TextDirection.ltr,
-                        decoration: const InputDecoration(
-                            labelText: 'كلمة المرور',
-                            prefixIcon: Icon(Icons.lock_outline_rounded)),
-                      ),
-                      if (error != null) ...[
-                        const SizedBox(height: 10),
-                        Text(error!,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)),
-                      ],
-                      const SizedBox(height: 18),
-                      FilledButton(
-                          key: const Key('admin-login'),
-                          onPressed: _login,
-                          child: const Text('تسجيل الدخول')),
+  Widget build(BuildContext context) {
+    final loading = submitting || widget.state.status == LoadStatus.loading;
+    final failure = error ?? widget.state.failure?.message;
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Center(child: YallaCashLogo(height: 112)),
+                    const SizedBox(height: 18),
+                    Text('لوحة تحكم يلا كاش',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 6),
+                    const Text('دخول الإدارة', textAlign: TextAlign.center),
+                    const SizedBox(height: 24),
+                    TextField(
+                      key: const Key('admin-email'),
+                      controller: emailController,
+                      textDirection: TextDirection.ltr,
+                      decoration: const InputDecoration(
+                          labelText: 'البريد الإلكتروني',
+                          prefixIcon: Icon(Icons.mail_outline_rounded)),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: const Key('admin-password'),
+                      controller: passwordController,
+                      obscureText: true,
+                      textDirection: TextDirection.ltr,
+                      decoration: const InputDecoration(
+                          labelText: 'كلمة المرور',
+                          prefixIcon: Icon(Icons.lock_outline_rounded)),
+                    ),
+                    if (failure != null) ...[
                       const SizedBox(height: 10),
-                      Text('بيانات العرض مدخلة مسبقاً',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall),
+                      Text(failure,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error)),
                     ],
-                  ),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                        key: const Key('admin-login'),
+                        onPressed: loading ? null : _login,
+                        child: const Text('تسجيل الدخول')),
+                    const SizedBox(height: 10),
+                    Text('بيانات العرض مدخلة مسبقاً',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
                 ),
               ),
             ),
           ),
         ),
-      );
+      ),
+    );
+  }
 
-  void _login() {
-    if (emailController.text.trim().toLowerCase() == 'admin@yallacash.app' &&
-        passwordController.text == 'admin123') {
+  Future<void> _login() async {
+    setState(() {
+      error = null;
+      submitting = true;
+    });
+    await widget.cubit.signIn(
+      email: emailController.text.trim(),
+      password: passwordController.text,
+    );
+    if (!mounted) return;
+    if (widget.cubit.state.isAuthenticated) {
       widget.onAuthenticated();
     } else {
+      submitting = false;
       setState(() => error = 'بيانات دخول الإدارة غير صحيحة.');
     }
   }
@@ -176,14 +221,16 @@ enum AdminSection {
 
 class AdminShell extends StatefulWidget {
   const AdminShell(
-      {required this.store,
+      {required this.cubit,
+      required this.state,
       required this.repository,
       required this.darkMode,
       required this.onDarkModeChanged,
       required this.onLogout,
       super.key});
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final AdminAppState state;
   final YallaCashRepository repository;
   final bool darkMode;
   final ValueChanged<bool> onDarkModeChanged;
@@ -200,7 +247,11 @@ class _AdminShellState extends State<AdminShell> {
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 980;
     final content = _AdminContent(
-        section: section, store: widget.store, repository: widget.repository);
+      section: section,
+      cubit: widget.cubit,
+      state: widget.state,
+      repository: widget.repository,
+    );
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: !wide,
@@ -302,42 +353,70 @@ class _AdminNavigation extends StatelessWidget {
 }
 
 class _AdminContent extends StatelessWidget {
-  const _AdminContent(
-      {required this.section, required this.store, required this.repository});
+  const _AdminContent({
+    required this.section,
+    required this.cubit,
+    required this.state,
+    required this.repository,
+  });
 
   final AdminSection section;
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final AdminAppState state;
   final YallaCashRepository repository;
 
   @override
   Widget build(BuildContext context) => switch (section) {
-        AdminSection.overview => AdminOverview(store: store),
-        AdminSection.cashRequests => CashRequestsAdmin(store: store),
-        AdminSection.customers => CustomersAdmin(store: store),
-        AdminSection.stores => StoresAdmin(store: store),
+        AdminSection.overview => AdminOverview(state: state),
+        AdminSection.cashRequests => CashRequestsAdmin(
+            cubit: cubit,
+            requests: state.cashRequests,
+            customers: state.customers,
+          ),
+        AdminSection.customers => CustomersAdmin(
+            cubit: cubit,
+            customers: state.customers,
+          ),
+        AdminSection.stores => StoresAdmin(
+            cubit: cubit,
+            stores: state.stores,
+          ),
         AdminSection.governorates => GovernoratesAdmin(repository: repository),
         AdminSection.banners => BannersAdmin(repository: repository),
-        AdminSection.products => ProductsAdmin(store: store),
-        AdminSection.merchantAccounts => MerchantAccountsAdmin(store: store),
-        AdminSection.settlements => SettlementsAdmin(store: store),
-        AdminSection.settings => SettingsAdmin(store: store),
+        AdminSection.products => ProductsAdmin(
+            cubit: cubit,
+            products: state.products,
+          ),
+        AdminSection.merchantAccounts => MerchantAccountsAdmin(
+            cubit: cubit,
+            stores: state.stores,
+            accounts: state.merchantAccounts,
+          ),
+        AdminSection.settlements => SettlementsAdmin(
+            cubit: cubit,
+            settlements: state.settlements,
+          ),
+        AdminSection.settings => SettingsAdmin(
+            cubit: cubit,
+            pointValueSyp: state.pointValueSyp,
+          ),
       };
 }
 
 class AdminOverview extends StatelessWidget {
-  const AdminOverview({required this.store, super.key});
+  const AdminOverview({required this.state, super.key});
 
-  final YallaCashStore store;
+  final AdminAppState state;
 
   @override
   Widget build(BuildContext context) {
-    final sales =
-        store.transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
-    final revenue = store.transactions
-        .fold<int>(0, (sum, item) => sum + item.platformRevenueSyp);
-    final pending = store.cashRequests
-        .where((item) => item.status == CashRequestStatus.pending)
-        .length;
+    final overview = state.overview;
+    if (overview == null) {
+      return _AdminPage(
+        key: const ValueKey('admin-overview'),
+        children: const [LinearProgressIndicator()],
+      );
+    }
     return _AdminPage(
       key: const ValueKey('admin-overview'),
       children: [
@@ -361,22 +440,22 @@ class AdminOverview extends StatelessWidget {
               children: [
                 _KpiCard(
                     label: 'المستخدمون',
-                    value: formatNumber(store.customers.length),
+                    value: formatNumber(overview.customers),
                     icon: Icons.people_outline_rounded,
                     color: YallaColors.primaryStrong),
                 _KpiCard(
                     label: 'المبيعات المسجلة',
-                    value: '${formatNumber(sales)} ل.س',
+                    value: '${formatNumber(overview.totalSalesSyp)} ل.س',
                     icon: Icons.receipt_long_outlined,
                     color: const Color(0xFF0E8C79)),
                 _KpiCard(
                     label: 'دخل المنصة',
-                    value: '${formatNumber(revenue)} ل.س',
+                    value: '${formatNumber(overview.platformRevenueSyp)} ل.س',
                     icon: Icons.trending_up_rounded,
                     color: const Color(0xFF7C6CF0)),
                 _KpiCard(
                     label: 'طلبات كاش معلقة',
-                    value: formatNumber(pending),
+                    value: formatNumber(overview.pendingCashRequests),
                     icon: Icons.notifications_active_outlined,
                     color: YallaColors.gold),
               ],
@@ -398,7 +477,7 @@ class AdminOverview extends StatelessWidget {
               DataColumn(label: Text('النقاط')),
               DataColumn(label: Text('التاريخ'))
             ],
-            rows: store.transactions
+            rows: const <LoyaltyTransaction>[]
                 .take(8)
                 .map((item) => DataRow(cells: [
                       DataCell(Text(item.storeName)),
@@ -416,15 +495,19 @@ class AdminOverview extends StatelessWidget {
 }
 
 class CashRequestsAdmin extends StatelessWidget {
-  const CashRequestsAdmin({required this.store, super.key});
+  const CashRequestsAdmin({
+    required this.cubit,
+    required this.requests,
+    required this.customers,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final List<CashRedemptionRequest> requests;
+  final List<Customer> customers;
 
   @override
   Widget build(BuildContext context) {
-    final requests = store.cashRequests
-        .where((item) => item.status == CashRequestStatus.pending)
-        .toList();
     return _AdminPage(children: [
       const _PageTitle(
           title: 'طلبات استبدال النقاط بكاش',
@@ -436,7 +519,7 @@ class CashRequestsAdmin extends StatelessWidget {
             text: 'لا توجد طلبات معلقة')
       else
         ...requests.map((request) {
-          final customer = store.customerById(request.customerId);
+          final customer = _customerForRequest(request, customers);
           return Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: Padding(
@@ -459,11 +542,11 @@ class CashRequestsAdmin extends StatelessWidget {
                                 '${formatNumber(request.pointsRequested)} نقطة · ${formatNumber(request.cashValueSyp)} ل.س')
                           ])),
                   FilledButton.tonalIcon(
-                      onPressed: () => store.settleCashRequest(request.id),
+                      onPressed: () => cubit.resolveCashRequest(request, true),
                       icon: const Icon(Icons.check_rounded),
                       label: const Text('تمت المحاسبة')),
                   OutlinedButton.icon(
-                      onPressed: () => store.rejectCashRequest(request.id),
+                      onPressed: () => cubit.resolveCashRequest(request, false),
                       icon: const Icon(Icons.close_rounded),
                       label: const Text('رفض الطلب')),
                 ],
@@ -476,9 +559,14 @@ class CashRequestsAdmin extends StatelessWidget {
 }
 
 class CustomersAdmin extends StatelessWidget {
-  const CustomersAdmin({required this.store, super.key});
+  const CustomersAdmin({
+    required this.cubit,
+    required this.customers,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final List<Customer> customers;
 
   @override
   Widget build(BuildContext context) => _AdminPage(children: [
@@ -494,7 +582,7 @@ class CustomersAdmin extends StatelessWidget {
               DataColumn(label: Text('تاريخ الانضمام')),
               DataColumn(label: Text('إجراءات'))
             ],
-            rows: store.customers
+            rows: customers
                 .map((customer) => DataRow(cells: [
                       DataCell(Text(customer.name,
                           style: const TextStyle(fontWeight: FontWeight.w800))),
@@ -554,9 +642,9 @@ class CustomersAdmin extends StatelessWidget {
     WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     if (points == null || points <= 0) return;
     if (grant) {
-      store.grantPoints(customer.id, points);
+      await cubit.grantPoints(customer, points, _adminPointAdjustmentNote);
     } else {
-      store.deductPoints(customer.id, points);
+      await cubit.deductPoints(customer, points, _adminPointAdjustmentNote);
     }
   }
 
@@ -577,7 +665,7 @@ class CustomersAdmin extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed == true) store.removeCustomer(customer.id);
+    if (confirmed == true) await cubit.deleteCustomer(customer);
   }
 }
 
@@ -1156,9 +1244,14 @@ class _BannerAdminMessage extends StatelessWidget {
 }
 
 class StoresAdmin extends StatelessWidget {
-  const StoresAdmin({required this.store, super.key});
+  const StoresAdmin({
+    required this.cubit,
+    required this.stores,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final List<PartnerStore> stores;
 
   @override
   Widget build(BuildContext context) => _AdminPage(children: [
@@ -1166,7 +1259,7 @@ class StoresAdmin extends StatelessWidget {
             title: 'إدارة المحلات',
             subtitle: 'المحل الحصري ونسبة العمولة ومعلومات الظهور',
             action: FilledButton.icon(
-                onPressed: store.addPartnerStore,
+                onPressed: () => _create(context),
                 icon: const Icon(Icons.add_rounded),
                 label: const Text('إضافة محل'))),
         const SizedBox(height: 18),
@@ -1179,20 +1272,25 @@ class StoresAdmin extends StatelessWidget {
           return Wrap(
             spacing: 12,
             runSpacing: 12,
-            children: store.stores
+            children: stores
                 .map((partner) => SizedBox(
                     width: width,
-                    child: _StoreAdminCard(store: store, partner: partner)))
+                    child: _StoreAdminCard(cubit: cubit, partner: partner)))
                 .toList(),
           );
         }),
       ]);
+
+  Future<void> _create(BuildContext context) async {
+    final created = await _showStoreEditor(context);
+    if (created != null) await cubit.createStore(created);
+  }
 }
 
 class _StoreAdminCard extends StatelessWidget {
-  const _StoreAdminCard({required this.store, required this.partner});
+  const _StoreAdminCard({required this.cubit, required this.partner});
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
   final PartnerStore partner;
 
   @override
@@ -1302,14 +1400,19 @@ class _StoreAdminCard extends StatelessWidget {
       location.dispose();
       description.dispose();
     });
-    if (updated != null) store.updatePartnerStore(partner.id, updated);
+    if (updated != null) await cubit.updateStore(updated);
   }
 }
 
 class ProductsAdmin extends StatelessWidget {
-  const ProductsAdmin({required this.store, super.key});
+  const ProductsAdmin({
+    required this.cubit,
+    required this.products,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final List<DigitalProduct> products;
 
   @override
   Widget build(BuildContext context) => _AdminPage(children: [
@@ -1317,7 +1420,7 @@ class ProductsAdmin extends StatelessWidget {
             title: 'المنتجات الرقمية',
             subtitle: 'إدارة خيارات استبدال النقاط',
             action: FilledButton.icon(
-                onPressed: store.addDigitalProduct,
+                onPressed: () => _createProduct(context),
                 icon: const Icon(Icons.add_rounded),
                 label: const Text('إضافة منتج'))),
         const SizedBox(height: 18),
@@ -1330,7 +1433,7 @@ class ProductsAdmin extends StatelessWidget {
               DataColumn(label: Text('الحالة')),
               DataColumn(label: Text(''))
             ],
-            rows: store.products
+            rows: products
                 .map((product) => DataRow(cells: [
                       DataCell(Text(product.name,
                           style: const TextStyle(fontWeight: FontWeight.w800))),
@@ -1406,14 +1509,26 @@ class ProductsAdmin extends StatelessWidget {
       name.dispose();
       cost.dispose();
     });
-    if (updated != null) store.updateDigitalProduct(product.id, updated);
+    if (updated != null) await cubit.updateProduct(updated);
+  }
+
+  Future<void> _createProduct(BuildContext context) async {
+    final created = await _showProductEditor(context);
+    if (created != null) await cubit.createProduct(created);
   }
 }
 
 class MerchantAccountsAdmin extends StatelessWidget {
-  const MerchantAccountsAdmin({required this.store, super.key});
+  const MerchantAccountsAdmin({
+    required this.cubit,
+    required this.stores,
+    required this.accounts,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final List<PartnerStore> stores;
+  final List<MerchantAccount> accounts;
 
   @override
   Widget build(BuildContext context) => _AdminPage(children: [
@@ -1421,10 +1536,9 @@ class MerchantAccountsAdmin extends StatelessWidget {
             title: 'حسابات دخول المحلات',
             subtitle: 'كل محل يمكن أن يمتلك أكثر من حساب أو جهاز'),
         const SizedBox(height: 18),
-        ...store.stores.map((partner) {
-          final accounts = store.merchantAccounts
-              .where((item) => item.storeId == partner.id)
-              .toList();
+        ...stores.map((partner) {
+          final storeAccounts =
+              accounts.where((item) => item.storeId == partner.id).toList();
           return Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: Padding(
@@ -1442,19 +1556,19 @@ class MerchantAccountsAdmin extends StatelessWidget {
                         icon: const Icon(Icons.add_rounded),
                         label: const Text('توليد حساب'))
                   ]),
-                  if (accounts.isEmpty)
+                  if (storeAccounts.isEmpty)
                     const Padding(
                         padding: EdgeInsets.only(top: 12),
                         child: Text('لا توجد حسابات لهذا المحل')),
-                  for (final account in accounts)
+                  for (final account in storeAccounts)
                     ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const CircleAvatar(
                             child: Icon(Icons.badge_outlined)),
                         title: Text(account.email,
                             textDirection: TextDirection.ltr),
-                        subtitle:
-                            Text('كلمة مرور العرض: ${account.demoPassword}'),
+                        subtitle: const Text(
+                            'كلمة المرور تظهر مرة واحدة عند الإنشاء'),
                         trailing: Text('${account.deviceCount} جهاز')),
                 ],
               ),
@@ -1463,14 +1577,16 @@ class MerchantAccountsAdmin extends StatelessWidget {
         }),
       ]);
 
-  void _addAccount(BuildContext context, PartnerStore partner) {
-    final account = store.addMerchantAccount(partner.id);
+  Future<void> _addAccount(BuildContext context, PartnerStore partner) async {
+    final issued = await _showMerchantAccountEditor(context, cubit, partner);
+    if (issued == null) return;
+    if (!context.mounted) return;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('تم إنشاء الحساب'),
         content: SelectableText(
-            'البريد: ${account.email}\nكلمة المرور المؤقتة: ${account.demoPassword}',
+            'البريد: ${issued.account.email}\nكلمة المرور المؤقتة: ${issued.temporaryPassword}',
             textDirection: TextDirection.ltr),
         actions: [
           FilledButton(
@@ -1482,9 +1598,14 @@ class MerchantAccountsAdmin extends StatelessWidget {
 }
 
 class SettlementsAdmin extends StatelessWidget {
-  const SettlementsAdmin({required this.store, super.key});
+  const SettlementsAdmin({
+    required this.cubit,
+    required this.settlements,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final List<MerchantSettlementSummary> settlements;
 
   @override
   Widget build(BuildContext context) => _AdminPage(children: [
@@ -1501,21 +1622,20 @@ class SettlementsAdmin extends StatelessWidget {
               DataColumn(label: Text('العمولة')),
               DataColumn(label: Text('الحالة'))
             ],
-            rows: store.stores.map((partner) {
-              final transactions = store.transactionsForStore(partner.id);
-              final sales = transactions.fold<int>(
-                  0, (sum, item) => sum + item.amountSyp);
-              final commission = transactions.fold<int>(
-                  0, (sum, item) => sum + item.commissionAmountSyp);
-              final settled = store.settledStoreIds.contains(partner.id);
+            rows: settlements.map((settlement) {
+              final transactions = settlement.transactionCount;
+              final sales = settlement.totalSalesSyp;
+              final commission = settlement.commissionDueSyp;
+              final settled = settlement.status == 'settled';
               return DataRow(cells: [
-                DataCell(Text(partner.name,
+                DataCell(Text(settlement.storeName,
                     style: const TextStyle(fontWeight: FontWeight.w800))),
-                DataCell(Text('${transactions.length}')),
+                DataCell(Text('$transactions')),
                 DataCell(Text('${formatNumber(sales)} ل.س')),
                 DataCell(Text('${formatNumber(commission)} ل.س')),
                 DataCell(FilledButton.tonalIcon(
-                    onPressed: () => store.toggleStoreSettlement(partner.id),
+                    onPressed:
+                        settled ? null : () => cubit.settleStore(settlement),
                     icon: Icon(settled
                         ? Icons.check_circle_rounded
                         : Icons.schedule_rounded),
@@ -1528,9 +1648,14 @@ class SettlementsAdmin extends StatelessWidget {
 }
 
 class SettingsAdmin extends StatefulWidget {
-  const SettingsAdmin({required this.store, super.key});
+  const SettingsAdmin({
+    required this.cubit,
+    required this.pointValueSyp,
+    super.key,
+  });
 
-  final YallaCashStore store;
+  final AdminAppCubit cubit;
+  final int? pointValueSyp;
 
   @override
   State<SettingsAdmin> createState() => _SettingsAdminState();
@@ -1538,7 +1663,16 @@ class SettingsAdmin extends StatefulWidget {
 
 class _SettingsAdminState extends State<SettingsAdmin> {
   late final controller =
-      TextEditingController(text: widget.store.pointValueSyp.toString());
+      TextEditingController(text: (widget.pointValueSyp ?? 1).toString());
+
+  @override
+  void didUpdateWidget(covariant SettingsAdmin oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pointValueSyp != widget.pointValueSyp &&
+        widget.pointValueSyp != null) {
+      controller.text = widget.pointValueSyp.toString();
+    }
+  }
 
   @override
   void dispose() {
@@ -1578,12 +1712,245 @@ class _SettingsAdminState extends State<SettingsAdmin> {
         ),
       ]);
 
-  void _save() {
+  Future<void> _save() async {
     final value = int.tryParse(controller.text) ?? 0;
     if (value <= 0) return;
-    widget.store.updatePointValue(value);
+    await widget.cubit.updatePointValue(value);
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('تم حفظ قيمة النقطة.')));
+  }
+}
+
+Customer _customerForRequest(
+  CashRedemptionRequest request,
+  List<Customer> customers,
+) {
+  for (final customer in customers) {
+    if (customer.id == request.customerId) return customer;
+  }
+  return Customer(
+    id: request.customerId,
+    name: request.customerId,
+    governorate: '',
+    pointsBalance: 0,
+    createdAt: request.createdAt,
+  );
+}
+
+Future<PartnerStore?> _showStoreEditor(
+  BuildContext context, [
+  PartnerStore? partner,
+]) async {
+  final name = TextEditingController(text: partner?.name);
+  final category = TextEditingController(text: partner?.category);
+  final rate = TextEditingController(text: partner?.commissionRate.toString());
+  final location = TextEditingController(text: partner?.location);
+  final description = TextEditingController(text: partner?.description);
+  try {
+    return await showDialog<PartnerStore>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(partner == null ? 'إضافة محل' : 'تعديل المحل'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(children: [
+              TextField(
+                  controller: name,
+                  decoration: const InputDecoration(labelText: 'اسم المحل')),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: category,
+                  decoration: const InputDecoration(labelText: 'الفئة')),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: rate,
+                  keyboardType: TextInputType.number,
+                  decoration:
+                      const InputDecoration(labelText: 'نسبة العمولة %')),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: location,
+                  decoration: const InputDecoration(labelText: 'الموقع')),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: description,
+                  maxLines: 3,
+                  decoration: const InputDecoration(labelText: 'الوصف')),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () {
+              final now = DateTime.now().microsecondsSinceEpoch;
+              Navigator.pop(
+                context,
+                PartnerStore(
+                  id: partner?.id ?? 'store-$now',
+                  name: name.text.trim(),
+                  category: category.text.trim(),
+                  commissionRate: double.tryParse(rate.text) ??
+                      partner?.commissionRate ??
+                      0,
+                  description: description.text.trim(),
+                  location: location.text.trim(),
+                  iconSeed: partner?.iconSeed ?? now.remainder(100000),
+                  isActive: partner?.isActive ?? true,
+                ),
+              );
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    name.dispose();
+    category.dispose();
+    rate.dispose();
+    location.dispose();
+    description.dispose();
+  }
+}
+
+Future<DigitalProduct?> _showProductEditor(
+  BuildContext context, [
+  DigitalProduct? product,
+]) async {
+  final name = TextEditingController(text: product?.name);
+  final cost = TextEditingController(text: product?.costInPoints.toString());
+  var needsPhone = product?.requiresPhoneNumber ?? false;
+  var active = product?.isActive ?? true;
+  try {
+    return await showDialog<DigitalProduct>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: Text(product == null ? 'إضافة منتج' : 'تعديل المنتج'),
+          content: SizedBox(
+            width: 460,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                  controller: name,
+                  decoration: const InputDecoration(labelText: 'اسم المنتج')),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: cost,
+                  keyboardType: TextInputType.number,
+                  decoration:
+                      const InputDecoration(labelText: 'التكلفة بالنقاط')),
+              SwitchListTile(
+                  value: needsPhone,
+                  onChanged: (value) => setLocalState(() => needsPhone = value),
+                  title: const Text('يتطلب رقم هاتف')),
+              SwitchListTile(
+                  value: active,
+                  onChanged: (value) => setLocalState(() => active = value),
+                  title: const Text('المنتج نشط')),
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () {
+                final now = DateTime.now().microsecondsSinceEpoch;
+                Navigator.pop(
+                  context,
+                  DigitalProduct(
+                    id: product?.id ?? 'product-$now',
+                    name: name.text.trim(),
+                    costInPoints:
+                        int.tryParse(cost.text) ?? product?.costInPoints ?? 0,
+                    iconSeed: product?.iconSeed ?? now.remainder(100000),
+                    requiresPhoneNumber: needsPhone,
+                    isActive: active,
+                  ),
+                );
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+  } finally {
+    name.dispose();
+    cost.dispose();
+  }
+}
+
+Future<IssuedMerchantAccount?> _showMerchantAccountEditor(
+  BuildContext context,
+  AdminAppCubit cubit,
+  PartnerStore store,
+) async {
+  final email = TextEditingController();
+  final password = TextEditingController();
+  final label = TextEditingController(text: store.name);
+  try {
+    final values = await showDialog<Map<String, String?>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('توليد حساب محل'),
+        content: SizedBox(
+          width: 460,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+                controller: email,
+                textDirection: TextDirection.ltr,
+                decoration:
+                    const InputDecoration(labelText: 'البريد الإلكتروني')),
+            const SizedBox(height: 10),
+            TextField(
+                controller: password,
+                textDirection: TextDirection.ltr,
+                decoration:
+                    const InputDecoration(labelText: 'كلمة مرور اختيارية')),
+            const SizedBox(height: 10),
+            TextField(
+                controller: label,
+                decoration: const InputDecoration(labelText: 'اسم الجهاز')),
+          ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, {
+              'email': email.text.trim(),
+              'password': password.text.trim(),
+              'label': label.text.trim(),
+            }),
+            child: const Text('إنشاء'),
+          ),
+        ],
+      ),
+    );
+    final accountEmail = values?['email'];
+    if (accountEmail == null || accountEmail.isEmpty) return null;
+    final accountPassword = values?['password'];
+    final displayLabel = values?['label'];
+    return await cubit.createMerchantAccount(
+      storeId: store.id,
+      email: accountEmail,
+      password: accountPassword == null || accountPassword.isEmpty
+          ? null
+          : accountPassword,
+      displayLabel:
+          displayLabel == null || displayLabel.isEmpty ? null : displayLabel,
+    );
+  } finally {
+    email.dispose();
+    password.dispose();
+    label.dispose();
   }
 }
 

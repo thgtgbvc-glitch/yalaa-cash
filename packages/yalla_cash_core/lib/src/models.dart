@@ -23,7 +23,9 @@ class Customer {
   final int pointsBalance;
   final DateTime createdAt;
 
-  Customer copyWith({int? pointsBalance, String? governorateId, String? governorate}) => Customer(
+  Customer copyWith(
+          {int? pointsBalance, String? governorateId, String? governorate}) =>
+      Customer(
         id: id,
         name: name,
         phone: phone,
@@ -52,7 +54,8 @@ class Governorate {
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  Governorate copyWith({String? nameAr, bool? isActive, int? displayOrder}) => Governorate(
+  Governorate copyWith({String? nameAr, bool? isActive, int? displayOrder}) =>
+      Governorate(
         id: id,
         nameAr: nameAr ?? this.nameAr,
         isActive: isActive ?? this.isActive,
@@ -107,7 +110,8 @@ class Banner {
     String? governorateId,
     DateTime? startsAt,
     DateTime? endsAt,
-  }) => Banner(
+  }) =>
+      Banner(
         id: id,
         title: title ?? this.title,
         subtitle: subtitle ?? this.subtitle,

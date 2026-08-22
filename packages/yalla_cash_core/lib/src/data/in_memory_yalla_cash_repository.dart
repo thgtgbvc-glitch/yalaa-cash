@@ -66,7 +66,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<AuthSession> signInMerchant({required String email, required String password}) async {
+  Future<AuthSession> signInMerchant(
+      {required String email, required String password}) async {
     if (!_store.loginMerchant(email, password)) {
       throw const YallaCashFailure(
         code: 'invalid_credentials',
@@ -81,8 +82,10 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<AuthSession> signInAdmin({required String email, required String password}) async {
-    if (email.trim().toLowerCase() != 'admin@yallacash.app' || password != 'admin123') {
+  Future<AuthSession> signInAdmin(
+      {required String email, required String password}) async {
+    if (email.trim().toLowerCase() != 'admin@yallacash.app' ||
+        password != 'admin123') {
       throw const YallaCashFailure(
         code: 'invalid_credentials',
         message: 'بيانات دخول الإدارة غير صحيحة.',
@@ -113,20 +116,26 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
       _store.currentCustomer!;
 
   @override
-  Future<List<Governorate>> listActiveGovernorates() async => _store.governorates
-      .where((item) => item.isActive)
-      .toList()
-    ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+  Future<List<Governorate>> listActiveGovernorates() async =>
+      _store.governorates.where((item) => item.isActive).toList()
+        ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
 
   @override
-  Future<List<Banner>> listActiveBanners({String? placement, String? governorateId}) async {
+  Future<List<Banner>> listActiveBanners(
+      {String? placement, String? governorateId}) async {
     final now = DateTime.now();
     return _store.banners.where((banner) {
-      final targetPlacement = placement == null || banner.placement.toLowerCase() == placement.toLowerCase();
-      final activeWindow = (banner.startsAt == null || !banner.startsAt!.isAfter(now)) &&
-          (banner.endsAt == null || !banner.endsAt!.isBefore(now));
-      final governorateMatches = banner.governorateId == null || banner.governorateId == governorateId;
-      return banner.isActive && targetPlacement && activeWindow && governorateMatches;
+      final targetPlacement = placement == null ||
+          banner.placement.toLowerCase() == placement.toLowerCase();
+      final activeWindow =
+          (banner.startsAt == null || !banner.startsAt!.isAfter(now)) &&
+              (banner.endsAt == null || !banner.endsAt!.isBefore(now));
+      final governorateMatches =
+          banner.governorateId == null || banner.governorateId == governorateId;
+      return banner.isActive &&
+          targetPlacement &&
+          activeWindow &&
+          governorateMatches;
     }).toList()
       ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
   }
@@ -159,18 +168,23 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<List<PartnerStore>> listActiveStores({String? city, String? category}) async =>
+  Future<List<PartnerStore>> listActiveStores(
+          {String? city, String? category}) async =>
       _store.stores
-          .where((store) => store.isActive && (category == null || store.category == category))
+          .where((store) =>
+              store.isActive &&
+              (category == null || store.category == category))
           .toList(growable: false);
 
   @override
-  Future<List<LoyaltyTransaction>> listCustomerTransactions({String? cursor}) async =>
+  Future<List<LoyaltyTransaction>> listCustomerTransactions(
+          {String? cursor}) async =>
       _store.transactionsForCustomer(_store.currentCustomer!.id);
 
   @override
-  Future<List<DigitalProduct>> listDigitalProducts() async =>
-      _store.products.where((product) => product.isActive).toList(growable: false);
+  Future<List<DigitalProduct>> listDigitalProducts() async => _store.products
+      .where((product) => product.isActive)
+      .toList(growable: false);
 
   @override
   Future<List<CashRedemptionRequest>> listCustomerCashRequests() async =>
@@ -201,8 +215,10 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   Future<MerchantWorkspaceSnapshot> getMerchantWorkspace() async {
     final store = _store.currentMerchantStore!;
     final transactions = _store.transactionsForStore(store.id);
-    final sales = transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
-    final commission = transactions.fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
+    final sales =
+        transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
+    final commission = transactions.fold<int>(
+        0, (sum, item) => sum + item.commissionAmountSyp);
     return MerchantWorkspaceSnapshot(
       account: _store.currentMerchant!,
       store: store,
@@ -219,7 +235,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<void> registerMerchantDevice({required String fingerprint, required String label}) async {}
+  Future<void> registerMerchantDevice(
+      {required String fingerprint, required String label}) async {}
 
   @override
   Future<Customer> resolveCustomerQr(String payload) async {
@@ -254,18 +271,23 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<MerchantSummary> getMerchantSummary({DateTime? from, DateTime? to}) async =>
+  Future<MerchantSummary> getMerchantSummary(
+          {DateTime? from, DateTime? to}) async =>
       (await getMerchantWorkspace()).summary;
 
   @override
-  Future<List<LoyaltyTransaction>> listMerchantTransactions({String? cursor}) async =>
+  Future<List<LoyaltyTransaction>> listMerchantTransactions(
+          {String? cursor}) async =>
       _store.transactionsForStore(_store.currentMerchantStore!.id);
 
   @override
   Future<AdminOverviewSnapshot> getAdminOverview() async {
-    final sales = _store.transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
-    final revenue = _store.transactions.fold<int>(0, (sum, item) => sum + item.platformRevenueSyp);
-    final commission = _store.transactions.fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
+    final sales =
+        _store.transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
+    final revenue = _store.transactions
+        .fold<int>(0, (sum, item) => sum + item.platformRevenueSyp);
+    final commission = _store.transactions
+        .fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
     return AdminOverviewSnapshot(
       customers: _store.customers.length,
       activeStores: _store.stores.where((store) => store.isActive).length,
@@ -280,7 +302,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<List<Customer>> listAdminCustomers() async => _store.customers.toList(growable: false);
+  Future<List<Customer>> listAdminCustomers() async =>
+      _store.customers.toList(growable: false);
 
   @override
   Future<Customer> grantCustomerPoints({
@@ -308,11 +331,15 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<List<Governorate>> listAdminGovernorates() async => _store.governorates.toList(growable: false);
+  Future<List<Governorate>> listAdminGovernorates() async =>
+      _store.governorates.toList(growable: false);
 
   @override
-  Future<List<Banner>> listAdminBanners({String? placement}) async => _store.banners
-      .where((item) => placement == null || item.placement.toLowerCase() == placement.toLowerCase())
+  Future<List<Banner>> listAdminBanners({String? placement}) async => _store
+      .banners
+      .where((item) =>
+          placement == null ||
+          item.placement.toLowerCase() == placement.toLowerCase())
       .toList(growable: false)
     ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
 
@@ -341,7 +368,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<List<CashRedemptionRequest>> listAdminCashRequests({String? status}) async =>
+  Future<List<CashRedemptionRequest>> listAdminCashRequests(
+          {String? status}) async =>
       _store.cashRequests
           .where((request) => status == null || request.status.name == status)
           .toList(growable: false);
@@ -360,7 +388,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<List<PartnerStore>> listAdminStores() async => _store.stores.toList(growable: false);
+  Future<List<PartnerStore>> listAdminStores() async =>
+      _store.stores.toList(growable: false);
 
   @override
   Future<PartnerStore> createStore(PartnerStore store) async {
@@ -375,7 +404,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
-  Future<List<DigitalProduct>> listAdminProducts() async => _store.products.toList(growable: false);
+  Future<List<DigitalProduct>> listAdminProducts() async =>
+      _store.products.toList(growable: false);
 
   @override
   Future<DigitalProduct> createProduct(DigitalProduct product) async {
@@ -421,13 +451,16 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
     DateTime? periodStart,
     DateTime? periodEnd,
   }) async {
-    final start = periodStart ?? DateTime(DateTime.now().year, DateTime.now().month);
-    final end = periodEnd ?? DateTime(DateTime.now().year, DateTime.now().month + 1);
+    final start =
+        periodStart ?? DateTime(DateTime.now().year, DateTime.now().month);
+    final end =
+        periodEnd ?? DateTime(DateTime.now().year, DateTime.now().month + 1);
     return _store.stores.map((store) {
       final transactions = _store.transactionsForStore(store.id);
-      final sales = transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
-      final commission =
-          transactions.fold<int>(0, (sum, item) => sum + item.commissionAmountSyp);
+      final sales =
+          transactions.fold<int>(0, (sum, item) => sum + item.amountSyp);
+      final commission = transactions.fold<int>(
+          0, (sum, item) => sum + item.commissionAmountSyp);
       final settled = _store.settledStoreIds.contains(store.id);
       return MerchantSettlementSummary(
         storeId: store.id,
@@ -450,7 +483,8 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
     required DateTime periodEnd,
   }) async {
     _store.toggleStoreSettlement(storeId);
-    return (await listSettlements(periodStart: periodStart, periodEnd: periodEnd))
+    return (await listSettlements(
+            periodStart: periodStart, periodEnd: periodEnd))
         .firstWhere((item) => item.storeId == storeId);
   }
 

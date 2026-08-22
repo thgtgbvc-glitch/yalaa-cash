@@ -181,7 +181,8 @@ abstract class YallaCashRepository {
   });
   Future<List<Governorate>> listActiveGovernorates();
   Future<Customer> updateCustomerGovernorate(String governorateId);
-  Future<List<Banner>> listActiveBanners({String? placement, String? governorateId});
+  Future<List<Banner>> listActiveBanners(
+      {String? placement, String? governorateId});
   Future<PointsSummary> getCustomerPoints();
   Future<CustomerQrToken> issueCustomerQrToken();
   Future<List<PartnerStore>> listActiveStores({String? city, String? category});
