@@ -1,15 +1,15 @@
-import { ValidationPipe } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { NestFactory } from '@nestjs/core';
-import compression from 'compression';
-import helmet from 'helmet';
-import { AppModule } from './app.module';
-import { ApiExceptionFilter } from './common/api-exception.filter';
+import { ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { NestFactory } from "@nestjs/core";
+import compression from "compression";
+import helmet from "helmet";
+import { AppModule } from "./app.module";
+import { ApiExceptionFilter } from "./common/api-exception.filter";
 
 function parseCorsOrigins(value?: string): string[] {
   if (!value) return [];
   return value
-    .split(',')
+    .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
 }
@@ -20,10 +20,32 @@ async function bootstrap(): Promise<void> {
 
   app.use(helmet());
   app.use(compression());
-  app.enableCors({
-    origin: parseCorsOrigins(config.get<string>('CORS_ORIGINS')),
-    credentials: true,
-  });
+ app.enableCors({
+origin: (
+  origin: string | undefined,
+  callback: (err: Error | null, allow?: boolean) => void,
+) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const allowedOrigins = parseCorsOrigins(
+      config.get<string>("CORS_ORIGINS"),
+    );
+
+    if (
+      allowedOrigins.includes(origin) ||
+      /^http:\/\/localhost:\d+$/.test(origin)
+    ) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Not allowed by CORS'), false);
+  },
+  credentials: true,
+});
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -33,7 +55,7 @@ async function bootstrap(): Promise<void> {
   );
   app.useGlobalFilters(new ApiExceptionFilter());
 
-  const port = config.get<number>('PORT', 3000);
+  const port = config.get<number>("PORT", 3000);
   await app.listen(port);
 }
 
