@@ -226,6 +226,7 @@ abstract class YallaCashRepository {
   Future<List<Banner>> listAdminBanners({String? placement});
   Future<Banner> createBanner(Banner banner);
   Future<Banner> updateBanner(Banner banner);
+  Future<void> deleteBanner(String bannerId);
   Future<Governorate> createGovernorate(Governorate governorate);
   Future<Governorate> updateGovernorate(Governorate governorate);
   Future<List<CashRedemptionRequest>> listAdminCashRequests({String? status});

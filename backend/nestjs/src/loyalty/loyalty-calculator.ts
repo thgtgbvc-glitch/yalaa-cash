@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException } from "@nestjs/common";
 
 export interface LoyaltyCalculationInput {
   invoiceAmountSyp: number;
@@ -18,14 +18,21 @@ export interface LoyaltyCalculationResult {
 
 export class LoyaltyCalculator {
   static calculate(input: LoyaltyCalculationInput): LoyaltyCalculationResult {
-    if (!Number.isInteger(input.invoiceAmountSyp) || input.invoiceAmountSyp <= 0) {
-      throw new BadRequestException('Invoice amount must be a positive integer.');
+    if (
+      !Number.isInteger(input.invoiceAmountSyp) ||
+      input.invoiceAmountSyp <= 0
+    ) {
+      throw new BadRequestException(
+        "Invoice amount must be a positive integer.",
+      );
     }
     if (input.commissionRate < 0 || input.commissionRate > 100) {
-      throw new BadRequestException('Commission rate must be between 0 and 100.');
+      throw new BadRequestException(
+        "Commission rate must be between 0 and 100.",
+      );
     }
     if (!Number.isInteger(input.pointValueSyp) || input.pointValueSyp <= 0) {
-      throw new BadRequestException('Point value must be a positive integer.');
+      throw new BadRequestException("Point value must be a positive integer.");
     }
 
     const commissionAmountSyp = Math.round(

@@ -10,7 +10,7 @@ import {
   ProductRedemption,
   Store,
   User,
-} from '@prisma/client';
+} from "@prisma/client";
 
 type CustomerWithUser = {
   userId: string;
@@ -19,11 +19,11 @@ type CustomerWithUser = {
   governorateId: string | null;
   pointsBalance: bigint;
   createdAt: Date;
-  user: Pick<User, 'phone' | 'authMethod'>;
+  user: Pick<User, "phone" | "authMethod">;
 };
 
 type TransactionWithStore = LoyaltyTransaction & {
-  store?: Pick<Store, 'name'> | null;
+  store?: Pick<Store, "name"> | null;
 };
 
 type CashRequestWithCustomer = {
@@ -38,17 +38,17 @@ type CashRequestWithCustomer = {
 };
 
 type MerchantAccountWithStore = MerchantAccount & {
-  user?: Pick<User, 'email'> | null;
-  store?: Pick<Store, 'name'> | null;
+  user?: Pick<User, "email"> | null;
+  store?: Pick<Store, "name"> | null;
   _count?: { devices: number };
 };
 
 export function toNumber(value: bigint | number): number {
-  return typeof value === 'bigint' ? Number(value) : value;
+  return typeof value === "bigint" ? Number(value) : value;
 }
 
 export function presentAuthMethod(value?: AuthMethod | null): string {
-  return value?.toLowerCase() ?? 'phone';
+  return value?.toLowerCase() ?? "phone";
 }
 
 export function presentCustomer(customer: CustomerWithUser) {
@@ -114,7 +114,7 @@ export function presentTransaction(transaction: TransactionWithStore) {
   return {
     id: transaction.id,
     storeId: transaction.storeId,
-    storeName: transaction.store?.name ?? '',
+    storeName: transaction.store?.name ?? "",
     customerId: transaction.customerId,
     amountSyp: toNumber(transaction.amountSyp),
     commissionRateSnapshot: Number(transaction.commissionRateSnapshot),

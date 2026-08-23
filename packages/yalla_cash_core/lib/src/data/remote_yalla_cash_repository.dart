@@ -372,6 +372,11 @@ class RemoteYallaCashRepository implements YallaCashRepository {
       );
 
   @override
+  Future<void> deleteBanner(String bannerId) async {
+    await _client.delete('/admin/banners/$bannerId');
+  }
+
+  @override
   Future<Governorate> createGovernorate(Governorate governorate) async =>
       _governorateFromApi(
         apiMap(
@@ -569,6 +574,9 @@ class RemoteYallaCashRepository implements YallaCashRepository {
 
   Future<AuthSession> _authenticate(
       String path, Map<String, Object?> body) async {
+     print('LOGIN EMAIL: ${body['email']}');
+  print('LOGIN PASSWORD IS 123456: ${body['password'] == '123456'}');
+
     final json =
         apiMap(await _client.post(path, body: body, authenticated: false));
     final tokens = authTokensFromResponse(json);

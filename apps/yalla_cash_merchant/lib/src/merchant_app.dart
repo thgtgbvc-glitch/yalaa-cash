@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:yalla_cash_core/yalla_cash_core.dart';
@@ -85,10 +86,16 @@ class _YallaCashMerchantAppState extends State<YallaCashMerchantApp> {
 }
 
 YallaCashRuntime _merchantProductionRuntime() {
-  const baseUrl = String.fromEnvironment(
-    'YALLA_CASH_API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:3000',
-  );
+  const configuredBaseUrl = String.fromEnvironment('YALLA_CASH_API_BASE_URL');
+  if (kReleaseMode && configuredBaseUrl.isEmpty) {
+    throw StateError(
+      'YALLA_CASH_API_BASE_URL must be provided for release builds.',
+    );
+  }
+ final baseUrl =
+    configuredBaseUrl.isEmpty
+        ? 'https://yalla-cash-api.onrender.com'
+        : configuredBaseUrl;
   return YallaCashRuntime.fromEnvironment(
     environment: YallaCashEnvironment(
       apiBaseUrl: Uri.parse(baseUrl),

@@ -1,4 +1,4 @@
-import { AuthMethod } from '@prisma/client';
+import { AuthMethod } from "@prisma/client";
 import {
   IsEmail,
   IsEnum,
@@ -8,7 +8,7 @@ import {
   Length,
   MaxLength,
   MinLength,
-} from 'class-validator';
+} from "class-validator";
 
 export class RequestPhoneOtpDto {
   @IsString()
@@ -89,7 +89,7 @@ export class OtpStartResponseDto {
 }
 
 export class TokenPairResponseDto {
-  tokenType!: 'Bearer';
+  tokenType!: "Bearer";
   accessToken!: string;
   refreshToken!: string;
   expiresInSeconds!: number;

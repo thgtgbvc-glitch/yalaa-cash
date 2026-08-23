@@ -1,3 +1,30 @@
+import java.io.FileInputStream
+import java.util.Properties
+
+val releaseKeystoreProperties = Properties()
+val releaseKeystorePropertiesFile = rootProject.file("key.properties")
+if (releaseKeystorePropertiesFile.exists()) {
+    FileInputStream(releaseKeystorePropertiesFile).use {
+        releaseKeystoreProperties.load(it)
+    }
+}
+
+fun releaseSigningValue(name: String): String? =
+    releaseKeystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+
+val hasReleaseSigning =
+    listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        .all { releaseSigningValue(it) != null }
+
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.name.contains("Release", ignoreCase = true) } && !hasReleaseSigning) {
+        throw GradleException(
+            "Missing release signing credentials. Create android/key.properties with storeFile, " +
+                "storePassword, keyAlias, and keyPassword; keystore files and key.properties are ignored.",
+        )
+    }
+}
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -28,11 +55,20 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = rootProject.file(releaseSigningValue("storeFile")!!)
+                storePassword = releaseSigningValue("storePassword")
+                keyAlias = releaseSigningValue("keyAlias")
+                keyPassword = releaseSigningValue("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Production signing is not configured in this repository.
-            // Debug signing is used so local release builds can still be produced.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

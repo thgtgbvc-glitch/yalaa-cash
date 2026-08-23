@@ -287,6 +287,11 @@ class YallaCashStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void deleteBanner(String bannerId) {
+    _banners.removeWhere((item) => item.id == bannerId);
+    notifyListeners();
+  }
+
   void addGovernorate(Governorate governorate) {
     _governorates.add(governorate);
     notifyListeners();

@@ -1,8 +1,8 @@
-import { BadRequestException } from '@nestjs/common';
-import { LoyaltyCalculator } from '../src/loyalty/loyalty-calculator';
+import { BadRequestException } from "@nestjs/common";
+import { LoyaltyCalculator } from "../src/loyalty/loyalty-calculator";
 
-describe('LoyaltyCalculator', () => {
-  it('splits commission and converts the customer share into points', () => {
+describe("LoyaltyCalculator", () => {
+  it("splits commission and converts the customer share into points", () => {
     const result = LoyaltyCalculator.calculate({
       invoiceAmountSyp: 100000,
       commissionRate: 10,
@@ -15,7 +15,7 @@ describe('LoyaltyCalculator', () => {
     expect(result.customerPoints).toBe(1000);
   });
 
-  it('rejects invalid invoice amounts', () => {
+  it("rejects invalid invoice amounts", () => {
     expect(() =>
       LoyaltyCalculator.calculate({
         invoiceAmountSyp: 0,

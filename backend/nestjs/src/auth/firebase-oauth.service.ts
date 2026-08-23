@@ -1,8 +1,12 @@
-import { Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { AuthMethod } from '@prisma/client';
-import { App, cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
+import {
+  Injectable,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { AuthMethod } from "@prisma/client";
+import { App, cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 
 interface VerifiedOAuthIdentity {
   subject: string;
@@ -17,16 +21,17 @@ export class FirebaseOAuthService {
   constructor(private readonly config: ConfigService) {}
 
   async verifyCustomerToken(
-    provider: Extract<AuthMethod, 'GOOGLE' | 'FACEBOOK'>,
+    provider: Extract<AuthMethod, "GOOGLE" | "FACEBOOK">,
     idToken: string,
   ): Promise<VerifiedOAuthIdentity> {
     const app = this.getApp();
     const token = await getAuth(app).verifyIdToken(idToken, true);
     const signInProvider = token.firebase?.sign_in_provider;
-    const expected = provider === AuthMethod.GOOGLE ? 'google.com' : 'facebook.com';
+    const expected =
+      provider === AuthMethod.GOOGLE ? "google.com" : "facebook.com";
 
     if (signInProvider !== expected) {
-      throw new UnauthorizedException('OAuth provider does not match token.');
+      throw new UnauthorizedException("OAuth provider does not match token.");
     }
 
     return {
@@ -43,12 +48,16 @@ export class FirebaseOAuthService {
       return this.app;
     }
 
-    const projectId = this.config.get<string>('FIREBASE_PROJECT_ID');
-    const clientEmail = this.config.get<string>('FIREBASE_CLIENT_EMAIL');
-    const privateKey = this.config.get<string>('FIREBASE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
+    const projectId = this.config.get<string>("FIREBASE_PROJECT_ID");
+    const clientEmail = this.config.get<string>("FIREBASE_CLIENT_EMAIL");
+    const privateKey = this.config
+      .get<string>("FIREBASE_PRIVATE_KEY")
+      ?.replace(/\\n/g, "\n");
 
     if (!projectId || !clientEmail || !privateKey) {
-      throw new ServiceUnavailableException('Firebase OAuth verification is not configured.');
+      throw new ServiceUnavailableException(
+        "Firebase OAuth verification is not configured.",
+      );
     }
 
     this.app = initializeApp({

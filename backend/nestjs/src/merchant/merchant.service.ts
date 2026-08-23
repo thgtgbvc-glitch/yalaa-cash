@@ -5,27 +5,27 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import { PointsEntryType, Prisma } from '@prisma/client';
-import { createHmac } from 'crypto';
-import { PaginationQueryDto } from '../common/pagination.dto';
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import { PointsEntryType, Prisma } from "@prisma/client";
+import { createHmac } from "crypto";
+import { PaginationQueryDto } from "../common/pagination.dto";
 import {
   presentCustomer,
   presentMerchantAccount,
   presentStore,
   presentTransaction,
   toNumber,
-} from '../common/presenters';
-import { LoyaltyCalculator } from '../loyalty/loyalty-calculator';
-import { PrismaService } from '../prisma/prisma.service';
+} from "../common/presenters";
+import { LoyaltyCalculator } from "../loyalty/loyalty-calculator";
+import { PrismaService } from "../prisma/prisma.service";
 import {
   MerchantPeriodQueryDto,
   RegisterInvoiceDto,
   RegisterMerchantDeviceDto,
   ResolveCustomerQrDto,
-} from './dto/merchant.dto';
+} from "./dto/merchant.dto";
 
 interface QrPayload {
   sub: string;
@@ -89,7 +89,7 @@ export class MerchantService {
       where: { userId: customerId },
       include: { user: true },
     });
-    if (!customer) throw new NotFoundException('Customer was not found.');
+    if (!customer) throw new NotFoundException("Customer was not found.");
     return presentCustomer(customer);
   }
 
@@ -108,16 +108,20 @@ export class MerchantService {
           where: { userId, isActive: true },
           include: { store: true },
         });
-        if (!account) throw new ForbiddenException('Merchant account is not active.');
-        if (!account.store.isActive) throw new ConflictException('Store is not active.');
+        if (!account)
+          throw new ForbiddenException("Merchant account is not active.");
+        if (!account.store.isActive)
+          throw new ConflictException("Store is not active.");
 
         const customer = await tx.customerProfile.findUnique({
           where: { userId: customerId },
           select: { pointsBalance: true },
         });
-        if (!customer) throw new NotFoundException('Customer was not found.');
+        if (!customer) throw new NotFoundException("Customer was not found.");
 
-        const settings = await tx.platformSettings.findUniqueOrThrow({ where: { id: 1 } });
+        const settings = await tx.platformSettings.findUniqueOrThrow({
+          where: { id: 1 },
+        });
         const calculation = LoyaltyCalculator.calculate({
           invoiceAmountSyp: dto.amountSyp,
           commissionRate: Number(account.store.commissionRate),
@@ -143,7 +147,9 @@ export class MerchantService {
 
         const updatedCustomer = await tx.customerProfile.update({
           where: { userId: customerId },
-          data: { pointsBalance: { increment: BigInt(calculation.customerPoints) } },
+          data: {
+            pointsBalance: { increment: BigInt(calculation.customerPoints) },
+          },
           select: { pointsBalance: true },
         });
 
@@ -154,7 +160,7 @@ export class MerchantService {
             pointsDelta: BigInt(calculation.customerPoints),
             balanceAfter: updatedCustomer.pointsBalance,
             transactionId: saved.id,
-            note: 'Invoice cashback points earned.',
+            note: "Invoice cashback points earned.",
           },
         });
 
@@ -197,7 +203,7 @@ export class MerchantService {
     const transactions = await this.prisma.loyaltyTransaction.findMany({
       where: { storeId: account.storeId },
       include: { store: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
@@ -205,7 +211,7 @@ export class MerchantService {
     const items = transactions.slice(0, query.limit);
     return {
       items: items.map(presentTransaction),
-      nextCursor: hasNext ? items[items.length - 1]?.id ?? null : null,
+      nextCursor: hasNext ? (items[items.length - 1]?.id ?? null) : null,
     };
   }
 
@@ -218,7 +224,8 @@ export class MerchantService {
         _count: { select: { devices: true } },
       },
     });
-    if (!account) throw new ForbiddenException('Merchant account is not active.');
+    if (!account)
+      throw new ForbiddenException("Merchant account is not active.");
     return account;
   }
 
@@ -226,41 +233,52 @@ export class MerchantService {
     let token: string | null = null;
     try {
       const parsed = new URL(payload);
-      if (parsed.protocol !== 'yallacash:' || parsed.hostname !== 'customer') {
-        throw new Error('Invalid QR scheme.');
+      if (parsed.protocol !== "yallacash:" || parsed.hostname !== "customer") {
+        throw new Error("Invalid QR scheme.");
       }
-      token = parsed.searchParams.get('token');
+      token = parsed.searchParams.get("token");
     } catch {
-      throw new BadRequestException('QR payload is invalid.');
+      throw new BadRequestException("QR payload is invalid.");
     }
 
-    if (!token) throw new BadRequestException('QR token is missing.');
+    if (!token) throw new BadRequestException("QR token is missing.");
 
     try {
       const decoded = await this.jwt.verifyAsync<QrPayload>(token, {
-        secret: this.config.getOrThrow<string>('QR_TOKEN_SECRET'),
-        audience: 'merchant-scan',
+        secret: this.config.getOrThrow<string>("QR_TOKEN_SECRET"),
+        audience: "merchant-scan",
       });
       return decoded.sub;
     } catch {
-      throw new UnauthorizedException('QR token is invalid or expired.');
+      throw new UnauthorizedException("QR token is invalid or expired.");
     }
   }
 
   private hashDeviceFingerprint(value: string): string {
-    return createHmac('sha256', this.config.getOrThrow<string>('SECRET_PEPPER'))
+    return createHmac("sha256", this.config.getOrThrow<string>("SECRET_PEPPER"))
       .update(value)
-      .digest('hex');
+      .digest("hex");
   }
 
-  private periodBounds(query: MerchantPeriodQueryDto): { from: Date; to: Date } {
+  private periodBounds(query: MerchantPeriodQueryDto): {
+    from: Date;
+    to: Date;
+  } {
     const now = new Date();
-    const defaultFrom = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const defaultTo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const defaultFrom = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    const defaultTo = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
     const from = query.from ? new Date(query.from) : defaultFrom;
     const to = query.to ? new Date(query.to) : defaultTo;
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
-      throw new BadRequestException('Invalid reporting period.');
+    if (
+      Number.isNaN(from.getTime()) ||
+      Number.isNaN(to.getTime()) ||
+      to <= from
+    ) {
+      throw new BadRequestException("Invalid reporting period.");
     }
     return { from, to };
   }

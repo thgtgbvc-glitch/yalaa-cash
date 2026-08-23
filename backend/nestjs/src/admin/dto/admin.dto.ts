@@ -1,4 +1,4 @@
-import { Transform } from 'class-transformer';
+import { Transform } from "class-transformer";
 import {
   IsBoolean,
   IsDateString,
@@ -12,8 +12,8 @@ import {
   MaxLength,
   Min,
   MinLength,
-} from 'class-validator';
-import { BannerPlacement, BannerStyle } from '@prisma/client';
+} from "class-validator";
+import { BannerPlacement, BannerStyle } from "@prisma/client";
 
 export class AdminListCashRequestsDto {
   @IsOptional()

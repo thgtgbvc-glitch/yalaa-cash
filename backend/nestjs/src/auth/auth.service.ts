@@ -3,22 +3,22 @@ import {
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import { AuthMethod, User, UserRole } from '@prisma/client';
-import { createHash, createHmac, randomBytes, randomInt } from 'crypto';
-import { PrismaService } from '../prisma/prisma.service';
-import { presentCustomer } from '../common/presenters';
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import { AuthMethod, User, UserRole } from "@prisma/client";
+import { createHash, createHmac, randomBytes, randomInt } from "crypto";
+import { PrismaService } from "../prisma/prisma.service";
+import { presentCustomer } from "../common/presenters";
 import {
   CustomerOAuthDto,
   OtpStartResponseDto,
   PasswordLoginDto,
   TokenPairResponseDto,
   VerifyPhoneOtpDto,
-} from './dto/auth.dto';
-import { FirebaseOAuthService } from './firebase-oauth.service';
-import { PasswordService } from './password.service';
+} from "./dto/auth.dto";
+import { FirebaseOAuthService } from "./firebase-oauth.service";
+import { PasswordService } from "./password.service";
 
 @Injectable()
 export class AuthService {
@@ -32,13 +32,13 @@ export class AuthService {
 
   async requestPhoneOtp(dto: { phone: string }): Promise<OtpStartResponseDto> {
     const phone = this.normalizePhone(dto.phone);
-    const devMode = this.config.get<boolean>('OTP_DEV_MODE', false);
-    if (!devMode && this.config.get<string>('NODE_ENV') === 'production') {
-      throw new ServiceUnavailableException('SMS provider is not configured.');
+    const devMode = this.config.get<boolean>("OTP_DEV_MODE", false);
+    if (!devMode && this.config.get<string>("NODE_ENV") === "production") {
+      throw new ServiceUnavailableException("SMS provider is not configured.");
     }
 
     const code = this.generateOtpCode();
-    const expiresInSeconds = this.config.get<number>('OTP_TTL_SECONDS', 300);
+    const expiresInSeconds = this.config.get<number>("OTP_TTL_SECONDS", 300);
     const challenge = await this.prisma.otpChallenge.create({
       data: {
         phone,
@@ -61,13 +61,13 @@ export class AuthService {
     });
 
     if (!challenge || challenge.phone !== phone || challenge.consumedAt) {
-      throw new UnauthorizedException('OTP challenge is invalid.');
+      throw new UnauthorizedException("OTP challenge is invalid.");
     }
     if (challenge.expiresAt.getTime() < Date.now()) {
-      throw new UnauthorizedException('OTP challenge has expired.');
+      throw new UnauthorizedException("OTP challenge has expired.");
     }
     if (challenge.attempts >= 5) {
-      throw new UnauthorizedException('Too many OTP attempts.');
+      throw new UnauthorizedException("Too many OTP attempts.");
     }
 
     const expected = this.hashOtp(phone, dto.code);
@@ -76,7 +76,7 @@ export class AuthService {
         where: { id: challenge.id },
         data: { attempts: { increment: 1 } },
       });
-      throw new UnauthorizedException('OTP code is incorrect.');
+      throw new UnauthorizedException("OTP code is incorrect.");
     }
 
     const user = await this.prisma.$transaction(async (tx) => {
@@ -117,13 +117,18 @@ export class AuthService {
     return this.issueAuthResponse(user);
   }
 
-  async verifyCustomerOAuth(dto: CustomerOAuthDto): Promise<TokenPairResponseDto> {
-    if (dto.provider !== AuthMethod.GOOGLE && dto.provider !== AuthMethod.FACEBOOK) {
-      throw new BadRequestException('Unsupported OAuth provider.');
+  async verifyCustomerOAuth(
+    dto: CustomerOAuthDto,
+  ): Promise<TokenPairResponseDto> {
+    if (
+      dto.provider !== AuthMethod.GOOGLE &&
+      dto.provider !== AuthMethod.FACEBOOK
+    ) {
+      throw new BadRequestException("Unsupported OAuth provider.");
     }
 
     const identity = await this.firebaseOAuth.verifyCustomerToken(
-      dto.provider as Extract<AuthMethod, 'GOOGLE' | 'FACEBOOK'>,
+      dto.provider as Extract<AuthMethod, "GOOGLE" | "FACEBOOK">,
       dto.firebaseIdToken,
     );
 
@@ -180,14 +185,14 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<TokenPairResponseDto> {
-    const tokenHash = this.hashSecret(refreshToken, 'refresh');
+    const tokenHash = this.hashSecret(refreshToken, "refresh");
     const saved = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
       include: { user: true },
     });
 
     if (!saved || saved.revokedAt || saved.expiresAt.getTime() < Date.now()) {
-      throw new UnauthorizedException('Refresh token is invalid.');
+      throw new UnauthorizedException("Refresh token is invalid.");
     }
 
     await this.prisma.refreshToken.update({
@@ -198,7 +203,7 @@ export class AuthService {
   }
 
   async logout(refreshToken: string): Promise<{ success: true }> {
-    const tokenHash = this.hashSecret(refreshToken, 'refresh');
+    const tokenHash = this.hashSecret(refreshToken, "refresh");
     await this.prisma.refreshToken.updateMany({
       where: { tokenHash, revokedAt: null },
       data: { revokedAt: new Date() },
@@ -212,7 +217,7 @@ export class AuthService {
 
   private async loginPassword(
     dto: PasswordLoginDto,
-    role: Extract<UserRole, 'MERCHANT' | 'ADMIN'>,
+    role: Extract<UserRole, "MERCHANT" | "ADMIN">,
   ): Promise<TokenPairResponseDto> {
     const user = await this.prisma.user.findFirst({
       where: {
@@ -223,32 +228,36 @@ export class AuthService {
     });
 
     if (!user?.passwordHash) {
-      throw new UnauthorizedException('Email or password is incorrect.');
+      throw new UnauthorizedException("Email or password is incorrect.");
     }
 
     const valid = await this.passwords.verify(dto.password, user.passwordHash);
     if (!valid) {
-      throw new UnauthorizedException('Email or password is incorrect.');
+      throw new UnauthorizedException("Email or password is incorrect.");
     }
 
     return this.issueAuthResponse(user);
   }
 
   private async issueAuthResponse(user: User): Promise<TokenPairResponseDto> {
-    if (!user.isActive) throw new UnauthorizedException('User account is disabled.');
+    if (!user.isActive)
+      throw new UnauthorizedException("User account is disabled.");
 
-    const accessTtl = this.config.get<number>('JWT_ACCESS_TTL_SECONDS', 900);
-    const refreshTtl = this.config.get<number>('JWT_REFRESH_TTL_SECONDS', 2592000);
+    const accessTtl = this.config.get<number>("JWT_ACCESS_TTL_SECONDS", 900);
+    const refreshTtl = this.config.get<number>(
+      "JWT_REFRESH_TTL_SECONDS",
+      2592000,
+    );
     const accessToken = await this.jwt.signAsync(
       { sub: user.id, role: user.role },
       { expiresIn: accessTtl },
     );
-    const refreshToken = randomBytes(48).toString('base64url');
+    const refreshToken = randomBytes(48).toString("base64url");
 
     await this.prisma.refreshToken.create({
       data: {
         userId: user.id,
-        tokenHash: this.hashSecret(refreshToken, 'refresh'),
+        tokenHash: this.hashSecret(refreshToken, "refresh"),
         expiresAt: new Date(Date.now() + refreshTtl * 1000),
       },
     });
@@ -262,7 +271,7 @@ export class AuthService {
         : null;
 
     return {
-      tokenType: 'Bearer',
+      tokenType: "Bearer",
       accessToken,
       refreshToken,
       expiresInSeconds: accessTtl,
@@ -275,29 +284,31 @@ export class AuthService {
   }
 
   private normalizePhone(phone: string): string {
-    const normalized = phone.replace(/[^\d+]/g, '');
+    const normalized = phone.replace(/[^\d+]/g, "");
     if (normalized.length < 8) {
-      throw new BadRequestException('Phone number is invalid.');
+      throw new BadRequestException("Phone number is invalid.");
     }
     return normalized;
   }
 
   private generateOtpCode(): string {
-    const length = this.config.get<number>('OTP_LENGTH', 6);
+    const length = this.config.get<number>("OTP_LENGTH", 6);
     const min = 10 ** (length - 1);
     const max = 10 ** length - 1;
     return randomInt(min, max).toString();
   }
 
   private hashOtp(phone: string, code: string): string {
-    return createHmac('sha256', this.config.getOrThrow<string>('SECRET_PEPPER'))
+    return createHmac("sha256", this.config.getOrThrow<string>("SECRET_PEPPER"))
       .update(`${phone}:${code}`)
-      .digest('hex');
+      .digest("hex");
   }
 
   private hashSecret(value: string, namespace: string): string {
-    return createHash('sha256')
-      .update(`${namespace}:${value}:${this.config.getOrThrow<string>('SECRET_PEPPER')}`)
-      .digest('hex');
+    return createHash("sha256")
+      .update(
+        `${namespace}:${value}:${this.config.getOrThrow<string>("SECRET_PEPPER")}`,
+      )
+      .digest("hex");
   }
 }

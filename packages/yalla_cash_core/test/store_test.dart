@@ -73,4 +73,14 @@ void main() {
         isNot(contains('banner-001')));
     expect(damascusBanners.map((banner) => banner.id), contains('banner-002'));
   });
+
+  test('admin can delete a banner from the repository', () async {
+    final store = YallaCashStore.demo();
+    final repository = InMemoryYallaCashRepository(store);
+
+    await repository.deleteBanner('banner-001');
+
+    final banners = await repository.listAdminBanners();
+    expect(banners.map((banner) => banner.id), isNot(contains('banner-001')));
+  });
 }

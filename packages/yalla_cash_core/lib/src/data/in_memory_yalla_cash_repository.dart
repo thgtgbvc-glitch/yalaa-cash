@@ -356,6 +356,11 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
+  Future<void> deleteBanner(String bannerId) async {
+    _store.deleteBanner(bannerId);
+  }
+
+  @override
   Future<Governorate> createGovernorate(Governorate governorate) async {
     _store.addGovernorate(governorate);
     return governorate;

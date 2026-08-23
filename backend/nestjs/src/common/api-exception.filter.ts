@@ -5,9 +5,9 @@ import {
   HttpException,
   HttpStatus,
   Logger,
-} from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import type { Request, Response } from 'express';
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import type { Request, Response } from "express";
 
 interface ApiErrorBody {
   statusCode: number;
@@ -29,7 +29,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const body = this.toErrorBody(exception, request);
 
     if (body.statusCode >= 500) {
-      this.logger.error(body.message, exception instanceof Error ? exception.stack : undefined);
+      this.logger.error(
+        body.message,
+        exception instanceof Error ? exception.stack : undefined,
+      );
     }
 
     response.status(body.statusCode).json(body);
@@ -40,9 +43,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
       const statusCode = exception.getStatus();
       const raw = exception.getResponse();
       const message =
-        typeof raw === 'object' && raw !== null && 'message' in raw
+        typeof raw === "object" && raw !== null && "message" in raw
           ? Array.isArray((raw as { message: unknown }).message)
-            ? (raw as { message: string[] }).message.join(', ')
+            ? (raw as { message: string[] }).message.join(", ")
             : String((raw as { message: unknown }).message)
           : exception.message;
 
@@ -50,7 +53,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
         statusCode,
         code: this.codeFromStatus(statusCode),
         message,
-        details: typeof raw === 'object' ? raw : undefined,
+        details: typeof raw === "object" ? raw : undefined,
         path: request.url,
         timestamp: new Date().toISOString(),
       };
@@ -58,15 +61,15 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       const statusCode =
-        exception.code === 'P2002'
+        exception.code === "P2002"
           ? HttpStatus.CONFLICT
-          : exception.code === 'P2025'
+          : exception.code === "P2025"
             ? HttpStatus.NOT_FOUND
             : HttpStatus.BAD_REQUEST;
       return {
         statusCode,
         code: exception.code,
-        message: 'Database request failed.',
+        message: "Database request failed.",
         details: exception.meta,
         path: request.url,
         timestamp: new Date().toISOString(),
@@ -75,8 +78,8 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     return {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-      code: 'internal_server_error',
-      message: 'Unexpected server error.',
+      code: "internal_server_error",
+      message: "Unexpected server error.",
       path: request.url,
       timestamp: new Date().toISOString(),
     };
@@ -85,17 +88,17 @@ export class ApiExceptionFilter implements ExceptionFilter {
   private codeFromStatus(status: number): string {
     switch (status) {
       case HttpStatus.BAD_REQUEST:
-        return 'bad_request';
+        return "bad_request";
       case HttpStatus.UNAUTHORIZED:
-        return 'unauthorized';
+        return "unauthorized";
       case HttpStatus.FORBIDDEN:
-        return 'forbidden';
+        return "forbidden";
       case HttpStatus.NOT_FOUND:
-        return 'not_found';
+        return "not_found";
       case HttpStatus.CONFLICT:
-        return 'conflict';
+        return "conflict";
       default:
-        return status >= 500 ? 'server_error' : 'request_error';
+        return status >= 500 ? "server_error" : "request_error";
     }
   }
 }

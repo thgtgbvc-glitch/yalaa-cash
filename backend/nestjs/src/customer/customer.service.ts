@@ -3,12 +3,20 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import { BannerPlacement, CashRequestStatus, PointsEntryType, Prisma } from '@prisma/client';
-import { randomUUID } from 'crypto';
-import { PaginatedResponse, PaginationQueryDto } from '../common/pagination.dto';
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import {
+  BannerPlacement,
+  CashRequestStatus,
+  PointsEntryType,
+  Prisma,
+} from "@prisma/client";
+import { randomUUID } from "crypto";
+import {
+  PaginatedResponse,
+  PaginationQueryDto,
+} from "../common/pagination.dto";
 import {
   presentBanner,
   presentCashRequest,
@@ -18,14 +26,14 @@ import {
   presentProductRedemption,
   presentTransaction,
   toNumber,
-} from '../common/presenters';
-import { PrismaService } from '../prisma/prisma.service';
+} from "../common/presenters";
+import { PrismaService } from "../prisma/prisma.service";
 import {
   RedeemDigitalProductDto,
   RequestCashRedemptionDto,
   UpdateCustomerGovernorateDto,
   UpdateCustomerProfileDto,
-} from './dto/customer.dto';
+} from "./dto/customer.dto";
 
 @Injectable()
 export class CustomerService {
@@ -40,7 +48,8 @@ export class CustomerService {
       where: { userId },
       include: { user: true },
     });
-    if (!customer) throw new NotFoundException('Customer profile was not found.');
+    if (!customer)
+      throw new NotFoundException("Customer profile was not found.");
     return presentCustomer(customer);
   }
 
@@ -53,7 +62,7 @@ export class CustomerService {
         ...(dto.phone
           ? {
               user: {
-                update: { phone: dto.phone.replace(/[^\d+]/g, '') },
+                update: { phone: dto.phone.replace(/[^\d+]/g, "") },
               },
             }
           : {}),
@@ -66,7 +75,7 @@ export class CustomerService {
   async listActiveGovernorates() {
     const items = await this.prisma.governorate.findMany({
       where: { isActive: true },
-      orderBy: [{ displayOrder: 'asc' }, { nameAr: 'asc' }],
+      orderBy: [{ displayOrder: "asc" }, { nameAr: "asc" }],
     });
     return { items: items.map(presentGovernorate) };
   }
@@ -75,7 +84,10 @@ export class CustomerService {
     const governorate = await this.prisma.governorate.findFirst({
       where: { id: dto.governorateId, isActive: true },
     });
-    if (!governorate) throw new BadRequestException('Governorate is not active or does not exist.');
+    if (!governorate)
+      throw new BadRequestException(
+        "Governorate is not active or does not exist.",
+      );
 
     const updated = await this.prisma.customerProfile.update({
       where: { userId },
@@ -93,7 +105,8 @@ export class CustomerService {
       where: { userId },
       select: { pointsBalance: true },
     });
-    if (!customer) throw new NotFoundException('Customer profile was not found.');
+    if (!customer)
+      throw new NotFoundException("Customer profile was not found.");
     const held = await this.pendingHeldPoints(userId);
     const balance = toNumber(customer.pointsBalance);
     return {
@@ -105,11 +118,11 @@ export class CustomerService {
 
   async issueQrToken(userId: string) {
     await this.ensureCustomer(userId);
-    const ttl = this.config.get<number>('QR_TOKEN_TTL_SECONDS', 120);
+    const ttl = this.config.get<number>("QR_TOKEN_TTL_SECONDS", 120);
     const token = await this.jwt.signAsync(
-      { sub: userId, jti: randomUUID(), aud: 'merchant-scan' },
+      { sub: userId, jti: randomUUID(), aud: "merchant-scan" },
       {
-        secret: this.config.getOrThrow<string>('QR_TOKEN_SECRET'),
+        secret: this.config.getOrThrow<string>("QR_TOKEN_SECRET"),
         expiresIn: ttl,
       },
     );
@@ -129,7 +142,7 @@ export class CustomerService {
     const transactions = await this.prisma.loyaltyTransaction.findMany({
       where: { customerId: userId },
       include: { store: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
@@ -137,28 +150,31 @@ export class CustomerService {
     const items = transactions.slice(0, query.limit);
     return {
       items: items.map(presentTransaction),
-      nextCursor: hasNext ? items[items.length - 1]?.id ?? null : null,
+      nextCursor: hasNext ? (items[items.length - 1]?.id ?? null) : null,
     };
   }
 
   async listDigitalProducts() {
     const products = await this.prisma.digitalProduct.findMany({
       where: { isActive: true },
-      orderBy: [{ costInPoints: 'asc' }, { name: 'asc' }],
+      orderBy: [{ costInPoints: "asc" }, { name: "asc" }],
     });
     return { items: products.map(presentDigitalProduct) };
   }
 
-  async listActiveBanners(userId: string, placement: string = 'HOME') {
+  async listActiveBanners(userId: string, placement: string = "HOME") {
     const customer = await this.prisma.customerProfile.findUnique({
       where: { userId },
       select: { governorateId: true },
     });
-    if (!customer) throw new NotFoundException('Customer profile was not found.');
+    if (!customer)
+      throw new NotFoundException("Customer profile was not found.");
 
     const bannerPlacement = placement.toUpperCase() as BannerPlacement;
     const now = new Date();
-    const governorateScope: Prisma.BannerWhereInput[] = [{ governorateId: null }];
+    const governorateScope: Prisma.BannerWhereInput[] = [
+      { governorateId: null },
+    ];
     if (customer.governorateId) {
       governorateScope.push({ governorateId: customer.governorateId });
     }
@@ -172,7 +188,7 @@ export class CustomerService {
           { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
         ],
       },
-      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "desc" }],
     });
 
     return { items: items.map(presentBanner) };
@@ -181,7 +197,7 @@ export class CustomerService {
   async listCashRequests(userId: string) {
     const requests = await this.prisma.cashRedemptionRequest.findMany({
       where: { customerId: userId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     return { items: requests.map(presentCashRequest) };
   }
@@ -194,20 +210,26 @@ export class CustomerService {
           where: { userId },
           select: { pointsBalance: true },
         });
-        if (!customer) throw new NotFoundException('Customer profile was not found.');
+        if (!customer)
+          throw new NotFoundException("Customer profile was not found.");
 
         const existingPending = await tx.cashRedemptionRequest.findFirst({
           where: { customerId: userId, status: CashRequestStatus.PENDING },
         });
         if (existingPending) {
-          throw new ConflictException('Customer already has a pending cash request.');
+          throw new ConflictException(
+            "Customer already has a pending cash request.",
+          );
         }
 
         const held = await this.pendingHeldPoints(userId, tx);
         const available = customer.pointsBalance - BigInt(held);
-        if (points > available) throw new BadRequestException('Insufficient available points.');
+        if (points > available)
+          throw new BadRequestException("Insufficient available points.");
 
-        const settings = await tx.platformSettings.findUniqueOrThrow({ where: { id: 1 } });
+        const settings = await tx.platformSettings.findUniqueOrThrow({
+          where: { id: 1 },
+        });
         const saved = await tx.cashRedemptionRequest.create({
           data: {
             customerId: userId,
@@ -224,7 +246,7 @@ export class CustomerService {
             pointsDelta: 0,
             balanceAfter: customer.pointsBalance,
             referenceId: saved.id,
-            note: 'Cash redemption points reserved.',
+            note: "Cash redemption points reserved.",
           },
         });
         return saved;
@@ -241,21 +263,28 @@ export class CustomerService {
         const product = await tx.digitalProduct.findUnique({
           where: { id: dto.productId },
         });
-        if (!product?.isActive) throw new NotFoundException('Digital product is not available.');
-        if (product.requiresPhoneNumber && (dto.phoneNumber?.trim().length ?? 0) < 8) {
-          throw new BadRequestException('Phone number is required for this product.');
+        if (!product?.isActive)
+          throw new NotFoundException("Digital product is not available.");
+        if (
+          product.requiresPhoneNumber &&
+          (dto.phoneNumber?.trim().length ?? 0) < 8
+        ) {
+          throw new BadRequestException(
+            "Phone number is required for this product.",
+          );
         }
 
         const customer = await tx.customerProfile.findUnique({
           where: { userId },
           select: { pointsBalance: true },
         });
-        if (!customer) throw new NotFoundException('Customer profile was not found.');
+        if (!customer)
+          throw new NotFoundException("Customer profile was not found.");
 
         const held = await this.pendingHeldPoints(userId, tx);
         const available = customer.pointsBalance - BigInt(held);
         if (product.costInPoints > available) {
-          throw new BadRequestException('Insufficient available points.');
+          throw new BadRequestException("Insufficient available points.");
         }
 
         const updatedCustomer = await tx.customerProfile.update({
@@ -280,7 +309,7 @@ export class CustomerService {
             pointsDelta: -product.costInPoints,
             balanceAfter: updatedCustomer.pointsBalance,
             referenceId: saved.id,
-            note: 'Digital product redeemed.',
+            note: "Digital product redeemed.",
           },
         });
 
@@ -293,13 +322,15 @@ export class CustomerService {
   }
 
   private async ensureCustomer(userId: string): Promise<void> {
-    const exists = await this.prisma.customerProfile.count({ where: { userId } });
-    if (!exists) throw new NotFoundException('Customer profile was not found.');
+    const exists = await this.prisma.customerProfile.count({
+      where: { userId },
+    });
+    if (!exists) throw new NotFoundException("Customer profile was not found.");
   }
 
   private async pendingHeldPoints(
     userId: string,
-    prisma: Pick<PrismaService, 'cashRedemptionRequest'> = this.prisma,
+    prisma: Pick<PrismaService, "cashRedemptionRequest"> = this.prisma,
   ): Promise<number> {
     const aggregate = await prisma.cashRedemptionRequest.aggregate({
       where: { customerId: userId, status: CashRequestStatus.PENDING },

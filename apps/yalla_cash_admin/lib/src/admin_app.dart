@@ -197,7 +197,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       widget.onAuthenticated();
     } else {
       submitting = false;
-      setState(() => error = 'بيانات دخول الإدارة غير صحيحة.');
+      final failure = widget.cubit.state.failure;
+
+      setState(() {
+        error = failure == null
+            ? 'فشل تسجيل الدخول.'
+            : '${failure.message} (${failure.code})';
+      });
     }
   }
 }
@@ -541,14 +547,22 @@ class CashRequestsAdmin extends StatelessWidget {
                             Text(
                                 '${formatNumber(request.pointsRequested)} نقطة · ${formatNumber(request.cashValueSyp)} ل.س')
                           ])),
-                  FilledButton.tonalIcon(
+                  SizedBox(
+                    width: 140,
+                    child: FilledButton.tonalIcon(
                       onPressed: () => cubit.resolveCashRequest(request, true),
                       icon: const Icon(Icons.check_rounded),
-                      label: const Text('تمت المحاسبة')),
-                  OutlinedButton.icon(
+                      label: const Text('حل الطلب'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 140,
+                    child: OutlinedButton.icon(
                       onPressed: () => cubit.resolveCashRequest(request, false),
                       icon: const Icon(Icons.close_rounded),
-                      label: const Text('رفض الطلب')),
+                      label: const Text('رفض الطلب'),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -930,6 +944,11 @@ class _BannersAdminState extends State<BannersAdmin> {
                         onPressed: () => _editBanner(context, item),
                         icon: const Icon(Icons.edit_outlined),
                       ),
+                      IconButton(
+                        tooltip: 'حذف',
+                        onPressed: () => _deleteBanner(item),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
                     ],
                   ),
                 ),
@@ -969,6 +988,34 @@ class _BannersAdminState extends State<BannersAdmin> {
 
   String _formatDate(DateTime value) =>
       '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+
+  Future<void> _deleteBanner(core.Banner item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('حذف الإعلان'),
+        content: Text('هل تريد حذف "${item.title}"؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await widget.repository.deleteBanner(item.id);
+      await _refresh();
+    } catch (_) {
+      _showBannerSnack('تعذر حذف الإعلان.');
+    }
+  }
 
   Future<void> _toggle(core.Banner item, bool isActive) async {
     try {
@@ -1393,13 +1440,12 @@ class _StoreAdminCard extends StatelessWidget {
         ],
       ),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      name.dispose();
-      category.dispose();
-      rate.dispose();
-      location.dispose();
-      description.dispose();
-    });
+    name.dispose();
+    category.dispose();
+    rate.dispose();
+    location.dispose();
+    description.dispose();
+
     if (updated != null) await cubit.updateStore(updated);
   }
 }
@@ -1531,51 +1577,66 @@ class MerchantAccountsAdmin extends StatelessWidget {
   final List<MerchantAccount> accounts;
 
   @override
-  Widget build(BuildContext context) => _AdminPage(children: [
-        const _PageTitle(
+  Widget build(BuildContext context) => _AdminPage(
+        children: [
+          const _PageTitle(
             title: 'حسابات دخول المحلات',
-            subtitle: 'كل محل يمكن أن يمتلك أكثر من حساب أو جهاز'),
-        const SizedBox(height: 18),
-        ...stores.map((partner) {
-          final storeAccounts =
-              accounts.where((item) => item.storeId == partner.id).toList();
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Expanded(
-                        child: Text(partner.name,
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w900))),
-                    FilledButton.tonalIcon(
+            subtitle: 'كل محل يمكن أن يمتلك أكثر من حساب أو جهاز',
+          ),
+          const SizedBox(height: 18),
+          ...stores.map((partner) {
+            final storeAccounts =
+                accounts.where((item) => item.storeId == partner.id).toList();
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      partner.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: 150,
+                      height: 44,
+                      child: FilledButton.tonalIcon(
                         onPressed: () => _addAccount(context, partner),
                         icon: const Icon(Icons.add_rounded),
-                        label: const Text('توليد حساب'))
-                  ]),
-                  if (storeAccounts.isEmpty)
-                    const Padding(
+                        label: const Text('توليد حساب'),
+                      ),
+                    ),
+                    if (storeAccounts.isEmpty)
+                      const Padding(
                         padding: EdgeInsets.only(top: 12),
-                        child: Text('لا توجد حسابات لهذا المحل')),
-                  for (final account in storeAccounts)
-                    ListTile(
+                        child: Text('لا توجد حسابات لهذا المحل'),
+                      ),
+                    for (final account in storeAccounts)
+                      ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const CircleAvatar(
-                            child: Icon(Icons.badge_outlined)),
-                        title: Text(account.email,
-                            textDirection: TextDirection.ltr),
+                          child: Icon(Icons.badge_outlined),
+                        ),
+                        title: Text(
+                          account.email,
+                          textDirection: TextDirection.ltr,
+                        ),
                         subtitle: const Text(
-                            'كلمة المرور تظهر مرة واحدة عند الإنشاء'),
-                        trailing: Text('${account.deviceCount} جهاز')),
-                ],
+                          'كلمة المرور تظهر مرة واحدة عند الإنشاء.',
+                        ),
+                        trailing: Text('${account.deviceCount} جهاز'),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          );
-        }),
-      ]);
+            );
+          }),
+        ],
+      );
 
   Future<void> _addAccount(BuildContext context, PartnerStore partner) async {
     final issued = await _showMerchantAccountEditor(context, cubit, partner);
@@ -1891,67 +1952,79 @@ Future<IssuedMerchantAccount?> _showMerchantAccountEditor(
   AdminAppCubit cubit,
   PartnerStore store,
 ) async {
-  final email = TextEditingController();
-  final password = TextEditingController();
-  final label = TextEditingController(text: store.name);
-  try {
-    final values = await showDialog<Map<String, String?>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('توليد حساب محل'),
-        content: SizedBox(
+  String email = '';
+  String password = '';
+  String label = store.name;
+
+  final values = await showDialog<Map<String, String>>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('توليد حساب محل'),
+      content: SingleChildScrollView(
+        child: SizedBox(
           width: 460,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-                controller: email,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
                 textDirection: TextDirection.ltr,
-                decoration:
-                    const InputDecoration(labelText: 'البريد الإلكتروني')),
-            const SizedBox(height: 10),
-            TextField(
-                controller: password,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'البريد الإلكتروني',
+                ),
+                onChanged: (value) => email = value,
+              ),
+              const SizedBox(height: 10),
+              TextField(
                 textDirection: TextDirection.ltr,
-                decoration:
-                    const InputDecoration(labelText: 'كلمة مرور اختيارية')),
-            const SizedBox(height: 10),
-            TextField(
-                controller: label,
-                decoration: const InputDecoration(labelText: 'اسم الجهاز')),
-          ]),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, {
-              'email': email.text.trim(),
-              'password': password.text.trim(),
-              'label': label.text.trim(),
-            }),
-            child: const Text('إنشاء'),
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'كلمة مرور اختيارية',
+                ),
+                onChanged: (value) => password = value,
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'اسم الجهاز',
+                ),
+                onChanged: (value) => label = value,
+              ),
+            ],
           ),
-        ],
+        ),
       ),
-    );
-    final accountEmail = values?['email'];
-    if (accountEmail == null || accountEmail.isEmpty) return null;
-    final accountPassword = values?['password'];
-    final displayLabel = values?['label'];
-    return await cubit.createMerchantAccount(
-      storeId: store.id,
-      email: accountEmail,
-      password: accountPassword == null || accountPassword.isEmpty
-          ? null
-          : accountPassword,
-      displayLabel:
-          displayLabel == null || displayLabel.isEmpty ? null : displayLabel,
-    );
-  } finally {
-    email.dispose();
-    password.dispose();
-    label.dispose();
-  }
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop({
+            'email': email.trim(),
+            'password': password.trim(),
+            'label': label.trim(),
+          }),
+          child: const Text('إنشاء'),
+        ),
+      ],
+    ),
+  );
+
+  if (values == null) return null;
+
+  final accountEmail = values['email']?.trim() ?? '';
+  if (accountEmail.isEmpty) return null;
+
+  final accountPassword = values['password']?.trim() ?? '';
+  final displayLabel = values['label']?.trim() ?? '';
+
+  return cubit.createMerchantAccount(
+    storeId: store.id,
+    email: accountEmail,
+    password: accountPassword.isEmpty ? null : accountPassword,
+    displayLabel: displayLabel.isEmpty ? null : displayLabel,
+  );
 }
 
 class _AdminPage extends StatelessWidget {

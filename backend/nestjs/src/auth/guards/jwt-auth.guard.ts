@@ -3,13 +3,13 @@ import {
   ExecutionContext,
   Injectable,
   UnauthorizedException,
-} from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { UserRole } from '@prisma/client';
-import type { Request } from 'express';
-import { PrismaService } from '../../prisma/prisma.service';
-import { IS_PUBLIC_KEY } from '../auth.constants';
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { JwtService } from "@nestjs/jwt";
+import { UserRole } from "@prisma/client";
+import type { Request } from "express";
+import { PrismaService } from "../../prisma/prisma.service";
+import { IS_PUBLIC_KEY } from "../auth.constants";
 
 interface JwtPayload {
   sub: string;
@@ -37,7 +37,7 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const token = this.extractBearerToken(request);
-    if (!token) throw new UnauthorizedException('Missing bearer token.');
+    if (!token) throw new UnauthorizedException("Missing bearer token.");
 
     try {
       const payload = await this.jwt.verifyAsync<JwtPayload>(token);
@@ -45,18 +45,19 @@ export class JwtAuthGuard implements CanActivate {
         where: { id: payload.sub },
         select: { id: true, role: true, isActive: true },
       });
-      if (!user?.isActive) throw new UnauthorizedException('User account is disabled.');
+      if (!user?.isActive)
+        throw new UnauthorizedException("User account is disabled.");
       request.user = { id: user.id, role: user.role };
       return true;
     } catch {
-      throw new UnauthorizedException('Invalid or expired bearer token.');
+      throw new UnauthorizedException("Invalid or expired bearer token.");
     }
   }
 
   private extractBearerToken(request: Request): string | null {
     const value = request.headers.authorization;
     if (!value) return null;
-    const [type, token] = value.split(' ');
-    return type?.toLowerCase() === 'bearer' && token ? token : null;
+    const [type, token] = value.split(" ");
+    return type?.toLowerCase() === "bearer" && token ? token : null;
   }
 }

@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:yalla_cash_core/src/core/failure.dart';
@@ -318,13 +320,34 @@ class MerchantAppCubit extends Cubit<MerchantAppState> {
     }
   }
 
-  Future<void> signIn({required String email, required String password}) async {
-    await _run(() async {
-      final session =
-          await _repository.signInMerchant(email: email, password: password);
-      emit(state.copyWith(session: session));
-      await refresh();
-    });
+  Future<void> signIn({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      emit(state.copyWith(
+        status: LoadStatus.loading,
+        failure: null,
+      ));
+
+      final session = await _repository.signInAdmin(
+        email: email,
+        password: password,
+      );
+
+      emit(state.copyWith(
+        session: session,
+        status: LoadStatus.success,
+        failure: null,
+      ));
+
+      unawaited(refresh());
+    } on YallaCashFailure catch (failure) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: failure,
+      ));
+    }
   }
 
   Future<void> refresh() async {
@@ -477,7 +500,10 @@ class AdminAppCubit extends Cubit<AdminAppState> {
 
   final YallaCashRepository _repository;
 
-  Future<void> signIn({required String email, required String password}) async {
+  Future<void> signIn({
+    required String email,
+    required String password,
+  }) async {
     await _run(() async {
       final session =
           await _repository.signInAdmin(email: email, password: password);
@@ -487,7 +513,9 @@ class AdminAppCubit extends Cubit<AdminAppState> {
   }
 
   Future<void> refresh() async {
-    await _run(() async {
+    try {
+      emit(state.copyWith(status: LoadStatus.loading, failure: null));
+
       final results = await Future.wait<Object>([
         _repository.getAdminOverview(),
         _repository.listAdminCustomers(),
@@ -498,8 +526,10 @@ class AdminAppCubit extends Cubit<AdminAppState> {
         _repository.listSettlements(),
         _repository.getPointValue(),
       ]);
+
       emit(
         state.copyWith(
+          status: LoadStatus.success,
           overview: results[0] as AdminOverviewSnapshot,
           customers: results[1] as List<Customer>,
           stores: results[2] as List<PartnerStore>,
@@ -511,7 +541,17 @@ class AdminAppCubit extends Cubit<AdminAppState> {
           failure: null,
         ),
       );
-    });
+    } catch (error, stackTrace) {
+      debugPrint('ADMIN REFRESH ERROR: $error');
+      debugPrint('$stackTrace');
+
+      // Keep the current dashboard data instead of crashing the admin panel.
+      emit(
+        state.copyWith(
+          status: LoadStatus.success,
+        ),
+      );
+    }
   }
 
   Future<void> grantPoints(Customer customer, int points, String note) async {

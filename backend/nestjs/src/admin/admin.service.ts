@@ -3,10 +3,16 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-} from '@nestjs/common';
-import { CashRequestStatus, PointsEntryType, Prisma, SettlementStatus, UserRole } from '@prisma/client';
-import { randomInt } from 'crypto';
-import { PasswordService } from '../auth/password.service';
+} from "@nestjs/common";
+import {
+  CashRequestStatus,
+  PointsEntryType,
+  Prisma,
+  SettlementStatus,
+  UserRole,
+} from "@prisma/client";
+import { randomInt } from "crypto";
+import { PasswordService } from "../auth/password.service";
 import {
   presentBanner,
   presentCashRequest,
@@ -16,8 +22,8 @@ import {
   presentMerchantAccount,
   presentStore,
   toNumber,
-} from '../common/presenters';
-import { PrismaService } from '../prisma/prisma.service';
+} from "../common/presenters";
+import { PrismaService } from "../prisma/prisma.service";
 import {
   AdjustCustomerPointsDto,
   AdminListCashRequestsDto,
@@ -33,7 +39,7 @@ import {
   UpdateGovernorateDto,
   UpdatePointSettingsDto,
   UpdateStoreDto,
-} from './dto/admin.dto';
+} from "./dto/admin.dto";
 
 @Injectable()
 export class AdminService {
@@ -43,30 +49,38 @@ export class AdminService {
   ) {}
 
   async overview() {
-    const [customerCount, storeCount, transactionAggregate, pendingCashRequests] =
-      await Promise.all([
-        this.prisma.customerProfile.count(),
-        this.prisma.store.count({ where: { isActive: true } }),
-        this.prisma.loyaltyTransaction.aggregate({
-          _count: { id: true },
-          _sum: {
-            amountSyp: true,
-            platformRevenueSyp: true,
-            commissionAmountSyp: true,
-          },
-        }),
-        this.prisma.cashRedemptionRequest.count({
-          where: { status: CashRequestStatus.PENDING },
-        }),
-      ]);
+    const [
+      customerCount,
+      storeCount,
+      transactionAggregate,
+      pendingCashRequests,
+    ] = await Promise.all([
+      this.prisma.customerProfile.count(),
+      this.prisma.store.count({ where: { isActive: true } }),
+      this.prisma.loyaltyTransaction.aggregate({
+        _count: { id: true },
+        _sum: {
+          amountSyp: true,
+          platformRevenueSyp: true,
+          commissionAmountSyp: true,
+        },
+      }),
+      this.prisma.cashRedemptionRequest.count({
+        where: { status: CashRequestStatus.PENDING },
+      }),
+    ]);
 
     return {
       customers: customerCount,
       activeStores: storeCount,
       transactions: transactionAggregate._count.id,
       totalSalesSyp: toNumber(transactionAggregate._sum.amountSyp ?? 0n),
-      platformRevenueSyp: toNumber(transactionAggregate._sum.platformRevenueSyp ?? 0n),
-      commissionDueSyp: toNumber(transactionAggregate._sum.commissionAmountSyp ?? 0n),
+      platformRevenueSyp: toNumber(
+        transactionAggregate._sum.platformRevenueSyp ?? 0n,
+      ),
+      commissionDueSyp: toNumber(
+        transactionAggregate._sum.commissionAmountSyp ?? 0n,
+      ),
       pendingCashRequests,
     };
   }
@@ -74,16 +88,24 @@ export class AdminService {
   async listCustomers() {
     const customers = await this.prisma.customerProfile.findMany({
       include: { user: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     return { items: customers.map(presentCustomer) };
   }
 
-  async grantPoints(adminUserId: string, customerId: string, dto: AdjustCustomerPointsDto) {
+  async grantPoints(
+    adminUserId: string,
+    customerId: string,
+    dto: AdjustCustomerPointsDto,
+  ) {
     return this.adjustPoints(adminUserId, customerId, dto, dto.points);
   }
 
-  async deductPoints(adminUserId: string, customerId: string, dto: AdjustCustomerPointsDto) {
+  async deductPoints(
+    adminUserId: string,
+    customerId: string,
+    dto: AdjustCustomerPointsDto,
+  ) {
     return this.adjustPoints(adminUserId, customerId, dto, -dto.points);
   }
 
@@ -97,19 +119,23 @@ export class AdminService {
     const requests = await this.prisma.cashRedemptionRequest.findMany({
       where: status ? { status } : undefined,
       include: { customer: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     return { items: requests.map(presentCashRequest) };
   }
 
-  async resolveCashRequest(adminUserId: string, requestId: string, approve: boolean) {
+  async resolveCashRequest(
+    adminUserId: string,
+    requestId: string,
+    approve: boolean,
+  ) {
     const updated = await this.prisma.$transaction(
       async (tx) => {
         const request = await tx.cashRedemptionRequest.findUnique({
           where: { id: requestId },
         });
         if (!request || request.status !== CashRequestStatus.PENDING) {
-          throw new NotFoundException('Pending cash request was not found.');
+          throw new NotFoundException("Pending cash request was not found.");
         }
 
         if (!approve) {
@@ -132,7 +158,7 @@ export class AdminService {
               pointsDelta: 0,
               balanceAfter: customer.pointsBalance,
               referenceId: request.id,
-              note: 'Cash redemption request rejected.',
+              note: "Cash redemption request rejected.",
             },
           });
           return rejected;
@@ -142,9 +168,11 @@ export class AdminService {
           where: { userId: request.customerId },
           select: { pointsBalance: true },
         });
-        if (!customer) throw new NotFoundException('Customer was not found.');
+        if (!customer) throw new NotFoundException("Customer was not found.");
         if (customer.pointsBalance < request.pointsRequested) {
-          throw new BadRequestException('Customer does not have enough points.');
+          throw new BadRequestException(
+            "Customer does not have enough points.",
+          );
         }
 
         const savedCustomer = await tx.customerProfile.update({
@@ -167,7 +195,7 @@ export class AdminService {
             pointsDelta: -request.pointsRequested,
             balanceAfter: savedCustomer.pointsBalance,
             referenceId: request.id,
-            note: 'Cash redemption request settled.',
+            note: "Cash redemption request settled.",
           },
         });
         return settled;
@@ -180,22 +208,24 @@ export class AdminService {
 
   async listStores() {
     const stores = await this.prisma.store.findMany({
-      orderBy: [{ city: 'asc' }, { category: 'asc' }, { name: 'asc' }],
+      orderBy: [{ city: "asc" }, { category: "asc" }, { name: "asc" }],
     });
     return { items: stores.map(presentStore) };
   }
 
   async listGovernorates() {
     const items = await this.prisma.governorate.findMany({
-      orderBy: [{ displayOrder: 'asc' }, { nameAr: 'asc' }],
+      orderBy: [{ displayOrder: "asc" }, { nameAr: "asc" }],
     });
     return { items: items.map(presentGovernorate) };
   }
 
   async listBanners(placement?: string) {
     const items = await this.prisma.banner.findMany({
-      where: placement ? { placement: placement.toUpperCase() as any } : undefined,
-      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+      where: placement
+        ? { placement: placement.toUpperCase() as any }
+        : undefined,
+      orderBy: [{ displayOrder: "asc" }, { createdAt: "desc" }],
     });
     return { items: items.map(presentBanner) };
   }
@@ -207,8 +237,8 @@ export class AdminService {
         subtitle: dto.subtitle?.trim() || null,
         imageUrl: dto.imageUrl.trim(),
         targetUrl: dto.targetUrl?.trim() || null,
-        placement: dto.placement ?? 'HOME',
-        style: dto.style ?? 'PROMO',
+        placement: dto.placement ?? "HOME",
+        style: dto.style ?? "PROMO",
         isActive: dto.isActive ?? true,
         displayOrder: dto.displayOrder,
         startsAt: dto.startsAt ? new Date(dto.startsAt) : null,
@@ -220,26 +250,51 @@ export class AdminService {
   }
 
   async updateBanner(bannerId: string, dto: UpdateBannerDto) {
-    const current = await this.prisma.banner.findUnique({ where: { id: bannerId } });
-    if (!current) throw new NotFoundException('Banner was not found.');
+    const current = await this.prisma.banner.findUnique({
+      where: { id: bannerId },
+    });
+    if (!current) throw new NotFoundException("Banner was not found.");
 
     const item = await this.prisma.banner.update({
       where: { id: bannerId },
       data: {
         ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
-        ...(dto.subtitle !== undefined ? { subtitle: dto.subtitle.trim() || null } : {}),
-        ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl.trim() } : {}),
-        ...(dto.targetUrl !== undefined ? { targetUrl: dto.targetUrl.trim() || null } : {}),
+        ...(dto.subtitle !== undefined
+          ? { subtitle: dto.subtitle.trim() || null }
+          : {}),
+        ...(dto.imageUrl !== undefined
+          ? { imageUrl: dto.imageUrl.trim() }
+          : {}),
+        ...(dto.targetUrl !== undefined
+          ? { targetUrl: dto.targetUrl.trim() || null }
+          : {}),
         ...(dto.placement !== undefined ? { placement: dto.placement } : {}),
         ...(dto.style !== undefined ? { style: dto.style } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        ...(dto.displayOrder !== undefined ? { displayOrder: dto.displayOrder } : {}),
-        ...(dto.startsAt !== undefined ? { startsAt: dto.startsAt ? new Date(dto.startsAt) : null } : {}),
-        ...(dto.endsAt !== undefined ? { endsAt: dto.endsAt ? new Date(dto.endsAt) : null } : {}),
-        ...(dto.governorateId !== undefined ? { governorateId: dto.governorateId || null } : {}),
+        ...(dto.displayOrder !== undefined
+          ? { displayOrder: dto.displayOrder }
+          : {}),
+        ...(dto.startsAt !== undefined
+          ? { startsAt: dto.startsAt ? new Date(dto.startsAt) : null }
+          : {}),
+        ...(dto.endsAt !== undefined
+          ? { endsAt: dto.endsAt ? new Date(dto.endsAt) : null }
+          : {}),
+        ...(dto.governorateId !== undefined
+          ? { governorateId: dto.governorateId || null }
+          : {}),
       },
     });
     return presentBanner(item);
+  }
+
+  async deleteBanner(bannerId: string) {
+    const current = await this.prisma.banner.findUnique({
+      where: { id: bannerId },
+    });
+    if (!current) throw new NotFoundException("Banner was not found.");
+    await this.prisma.banner.delete({ where: { id: bannerId } });
+    return { success: true };
   }
 
   async createGovernorate(dto: CreateGovernorateDto) {
@@ -254,14 +309,18 @@ export class AdminService {
   }
 
   async updateGovernorate(governorateId: string, dto: UpdateGovernorateDto) {
-    const current = await this.prisma.governorate.findUnique({ where: { id: governorateId } });
-    if (!current) throw new NotFoundException('Governorate was not found.');
+    const current = await this.prisma.governorate.findUnique({
+      where: { id: governorateId },
+    });
+    if (!current) throw new NotFoundException("Governorate was not found.");
     const item = await this.prisma.governorate.update({
       where: { id: governorateId },
       data: {
         ...(dto.nameAr !== undefined ? { nameAr: dto.nameAr.trim() } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        ...(dto.displayOrder !== undefined ? { displayOrder: dto.displayOrder } : {}),
+        ...(dto.displayOrder !== undefined
+          ? { displayOrder: dto.displayOrder }
+          : {}),
       },
     });
     return presentGovernorate(item);
@@ -275,8 +334,8 @@ export class AdminService {
         category: dto.category.trim(),
         city: dto.city.trim(),
         commissionRate: new Prisma.Decimal(dto.commissionRate),
-        description: dto.description?.trim() ?? '',
-        location: dto.location?.trim() ?? '',
+        description: dto.description?.trim() ?? "",
+        location: dto.location?.trim() ?? "",
         imageUrl: dto.imageUrl?.trim() || null,
         iconSeed: dto.iconSeed ?? 0,
         isActive: dto.isActive ?? true,
@@ -286,12 +345,15 @@ export class AdminService {
   }
 
   async updateStore(storeId: string, dto: UpdateStoreDto) {
-    const current = await this.prisma.store.findUnique({ where: { id: storeId } });
-    if (!current) throw new NotFoundException('Store was not found.');
+    const current = await this.prisma.store.findUnique({
+      where: { id: storeId },
+    });
+    if (!current) throw new NotFoundException("Store was not found.");
     const nextCity = dto.city?.trim() ?? current.city;
     const nextCategory = dto.category?.trim() ?? current.category;
     const nextActive = dto.isActive ?? current.isActive;
-    if (nextActive) await this.assertExclusiveStoreSlot(nextCity, nextCategory, storeId);
+    if (nextActive)
+      await this.assertExclusiveStoreSlot(nextCity, nextCategory, storeId);
 
     const store = await this.prisma.store.update({
       where: { id: storeId },
@@ -302,9 +364,15 @@ export class AdminService {
         ...(dto.commissionRate !== undefined
           ? { commissionRate: new Prisma.Decimal(dto.commissionRate) }
           : {}),
-        ...(dto.description !== undefined ? { description: dto.description.trim() } : {}),
-        ...(dto.location !== undefined ? { location: dto.location.trim() } : {}),
-        ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl.trim() || null } : {}),
+        ...(dto.description !== undefined
+          ? { description: dto.description.trim() }
+          : {}),
+        ...(dto.location !== undefined
+          ? { location: dto.location.trim() }
+          : {}),
+        ...(dto.imageUrl !== undefined
+          ? { imageUrl: dto.imageUrl.trim() || null }
+          : {}),
         ...(dto.iconSeed !== undefined ? { iconSeed: dto.iconSeed } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
@@ -314,7 +382,7 @@ export class AdminService {
 
   async listProducts() {
     const products = await this.prisma.digitalProduct.findMany({
-      orderBy: [{ isActive: 'desc' }, { costInPoints: 'asc' }, { name: 'asc' }],
+      orderBy: [{ isActive: "desc" }, { costInPoints: "asc" }, { name: "asc" }],
     });
     return { items: products.map(presentDigitalProduct) };
   }
@@ -338,8 +406,12 @@ export class AdminService {
       where: { id: productId },
       data: {
         ...(dto.name ? { name: dto.name.trim() } : {}),
-        ...(dto.costInPoints !== undefined ? { costInPoints: BigInt(dto.costInPoints) } : {}),
-        ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl.trim() || null } : {}),
+        ...(dto.costInPoints !== undefined
+          ? { costInPoints: BigInt(dto.costInPoints) }
+          : {}),
+        ...(dto.imageUrl !== undefined
+          ? { imageUrl: dto.imageUrl.trim() || null }
+          : {}),
         ...(dto.iconSeed !== undefined ? { iconSeed: dto.iconSeed } : {}),
         ...(dto.requiresPhoneNumber !== undefined
           ? { requiresPhoneNumber: dto.requiresPhoneNumber }
@@ -357,7 +429,7 @@ export class AdminService {
         store: { select: { name: true } },
         _count: { select: { devices: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     return { items: accounts.map(presentMerchantAccount) };
   }
@@ -367,7 +439,7 @@ export class AdminService {
     const passwordHash = await this.passwords.hash(password);
     const account = await this.prisma.merchantAccount.create({
       data: {
-        displayLabel: dto.displayLabel?.trim() || 'Primary account',
+        displayLabel: dto.displayLabel?.trim() || "Primary account",
         store: { connect: { id: dto.storeId } },
         user: {
           create: {
@@ -415,11 +487,15 @@ export class AdminService {
 
   async listSettlements(query: SettlementQueryDto) {
     const { periodStart, periodEnd } = this.periodBounds(query);
-    const stores = await this.prisma.store.findMany({ orderBy: { name: 'asc' } });
+    const stores = await this.prisma.store.findMany({
+      orderBy: { name: "asc" },
+    });
     const settlements = await this.prisma.merchantSettlement.findMany({
       where: { periodStart, periodEnd },
     });
-    const settlementByStore = new Map(settlements.map((item) => [item.storeId, item]));
+    const settlementByStore = new Map(
+      settlements.map((item) => [item.storeId, item]),
+    );
 
     const items = await Promise.all(
       stores.map(async (store) => {
@@ -456,8 +532,12 @@ export class AdminService {
   async settleStore(adminUserId: string, dto: SettleStoreDto) {
     const periodStart = new Date(dto.periodStart);
     const periodEnd = new Date(dto.periodEnd);
-    if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime()) || periodEnd <= periodStart) {
-      throw new BadRequestException('Invalid settlement period.');
+    if (
+      Number.isNaN(periodStart.getTime()) ||
+      Number.isNaN(periodEnd.getTime()) ||
+      periodEnd <= periodStart
+    ) {
+      throw new BadRequestException("Invalid settlement period.");
     }
 
     const aggregate = await this.prisma.loyaltyTransaction.aggregate({
@@ -528,9 +608,14 @@ export class AdminService {
           where: { userId: customerId },
           select: { pointsBalance: true },
         });
-        if (!customer) throw new NotFoundException('Customer was not found.');
-        if (signedPoints < 0 && customer.pointsBalance < BigInt(Math.abs(signedPoints))) {
-          throw new BadRequestException('Customer does not have enough points.');
+        if (!customer) throw new NotFoundException("Customer was not found.");
+        if (
+          signedPoints < 0 &&
+          customer.pointsBalance < BigInt(Math.abs(signedPoints))
+        ) {
+          throw new BadRequestException(
+            "Customer does not have enough points.",
+          );
         }
 
         const savedCustomer = await tx.customerProfile.update({
@@ -541,7 +626,10 @@ export class AdminService {
         await tx.pointsLedgerEntry.create({
           data: {
             customerId,
-            entryType: signedPoints >= 0 ? PointsEntryType.ADMIN_GRANT : PointsEntryType.ADMIN_DEDUCT,
+            entryType:
+              signedPoints >= 0
+                ? PointsEntryType.ADMIN_GRANT
+                : PointsEntryType.ADMIN_DEDUCT,
             pointsDelta: BigInt(signedPoints),
             balanceAfter: savedCustomer.pointsBalance,
             note: dto.note.trim(),
@@ -562,25 +650,40 @@ export class AdminService {
   ): Promise<void> {
     const existing = await this.prisma.store.findFirst({
       where: {
-        city: { equals: city.trim(), mode: 'insensitive' },
-        category: { equals: category.trim(), mode: 'insensitive' },
+        city: { equals: city.trim(), mode: "insensitive" },
+        category: { equals: category.trim(), mode: "insensitive" },
         isActive: true,
         ...(exceptStoreId ? { id: { not: exceptStoreId } } : {}),
       },
     });
     if (existing) {
-      throw new ConflictException('An active exclusive store already exists for this city/category.');
+      throw new ConflictException(
+        "An active exclusive store already exists for this city/category.",
+      );
     }
   }
 
-  private periodBounds(query: SettlementQueryDto): { periodStart: Date; periodEnd: Date } {
+  private periodBounds(query: SettlementQueryDto): {
+    periodStart: Date;
+    periodEnd: Date;
+  } {
     const now = new Date();
-    const defaultStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const defaultEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-    const periodStart = query.periodStart ? new Date(query.periodStart) : defaultStart;
+    const defaultStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    const defaultEnd = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
+    const periodStart = query.periodStart
+      ? new Date(query.periodStart)
+      : defaultStart;
     const periodEnd = query.periodEnd ? new Date(query.periodEnd) : defaultEnd;
-    if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime()) || periodEnd <= periodStart) {
-      throw new BadRequestException('Invalid settlement period.');
+    if (
+      Number.isNaN(periodStart.getTime()) ||
+      Number.isNaN(periodEnd.getTime()) ||
+      periodEnd <= periodStart
+    ) {
+      throw new BadRequestException("Invalid settlement period.");
     }
     return { periodStart, periodEnd };
   }

@@ -1,10 +1,10 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
-import { AuthController } from './auth.controller';
-import { AuthService } from './auth.service';
-import { FirebaseOAuthService } from './firebase-oauth.service';
-import { PasswordService } from './password.service';
+import { Module } from "@nestjs/common";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { JwtModule } from "@nestjs/jwt";
+import { AuthController } from "./auth.controller";
+import { AuthService } from "./auth.service";
+import { FirebaseOAuthService } from "./firebase-oauth.service";
+import { PasswordService } from "./password.service";
 
 @Module({
   imports: [
@@ -12,7 +12,7 @@ import { PasswordService } from './password.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+        secret: config.getOrThrow<string>("JWT_ACCESS_SECRET"),
       }),
     }),
   ],

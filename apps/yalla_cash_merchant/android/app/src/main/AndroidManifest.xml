@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.CAMERA"/>
 
     <application
-        android:label="yalla_cash_merchant"
+        android:label="Yalla Cash Merchant"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
