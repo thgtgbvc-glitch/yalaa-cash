@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:yalla_cash_core/yalla_cash_core.dart' hide Banner;
-import 'package:yalla_cash_core/yalla_cash_core.dart' as core show Banner;
 
 class YallaCashCustomerApp extends StatefulWidget {
   const YallaCashCustomerApp({super.key, this.store, this.runtime});
@@ -895,10 +894,7 @@ class _CustomerShellState extends State<CustomerShell> {
   Widget build(BuildContext context) {
     final customer = widget.state.customer!;
     final pages = [
-      CustomerHomePage(
-          state: widget.state,
-          customer: customer,
-          repository: widget.repository),
+      CustomerHomePage(state: widget.state, customer: customer),
       CustomerQrPage(
           cubit: widget.cubit, state: widget.state, customer: customer),
       CustomerWalletPage(
@@ -981,11 +977,22 @@ class _CustomerShellState extends State<CustomerShell> {
         ),
       ),
       body: SafeArea(
-        child: IndexedStack(index: selectedIndex, children: pages),
+        // Pull-to-refresh re-syncs every section (profile, points, stores,
+        // transactions, products, cash requests AND banners) from the server.
+        child: RefreshIndicator(
+          onRefresh: () => widget.cubit.refresh(),
+          child: IndexedStack(index: selectedIndex, children: pages),
+        ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
-        onDestinationSelected: (index) => setState(() => selectedIndex = index),
+        onDestinationSelected: (index) {
+          final changed = index != selectedIndex;
+          setState(() => selectedIndex = index);
+          // Re-sync authoritative data when switching sections so Home /
+          // Wallet / Rewards never remain stale after admin-side changes.
+          if (changed) unawaited(widget.cubit.refresh());
+        },
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.home_outlined),
@@ -1036,66 +1043,26 @@ class _CustomerShellState extends State<CustomerShell> {
   }
 }
 
-class CustomerHomePage extends StatefulWidget {
+/// Home page renders everything from [CustomerAppState] — including banners,
+/// which are owned by [CustomerAppCubit] so every refresh() reflects the
+/// latest admin-managed content (previously banners were fetched once into
+/// local widget state and never refreshed).
+class CustomerHomePage extends StatelessWidget {
   const CustomerHomePage(
-      {required this.state,
-      required this.customer,
-      required this.repository,
-      super.key});
+      {required this.state, required this.customer, super.key});
 
   final CustomerAppState state;
   final Customer customer;
-  final YallaCashRepository repository;
-
-  @override
-  State<CustomerHomePage> createState() => _CustomerHomePageState();
-}
-
-class _CustomerHomePageState extends State<CustomerHomePage> {
-  List<core.Banner> banners = const [];
-  bool loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadBanners();
-  }
-
-  @override
-  void didUpdateWidget(covariant CustomerHomePage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.customer.governorateId != widget.customer.governorateId) {
-      _loadBanners();
-    }
-  }
-
-  Future<void> _loadBanners() async {
-    setState(() => loading = true);
-    try {
-      final items = await widget.repository.listActiveBanners(
-        placement: 'HOME',
-        governorateId: widget.customer.governorateId,
-      );
-      if (!mounted) return;
-      setState(() {
-        banners = items;
-        loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => loading = false);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
-    final points = widget.state.points;
+    final points = state.points;
     final displayCustomer =
-        widget.customer.copyWith(pointsBalance: points?.pointsBalance);
+        customer.copyWith(pointsBalance: points?.pointsBalance);
     final held = points?.heldPoints ?? 0;
-    final stores = widget.state.stores
-        .where((store) => store.isActive)
-        .toList(growable: false);
+    final stores =
+        state.stores.where((store) => store.isActive).toList(growable: false);
+    final banners = state.banners;
     final bannerHeight = (MediaQuery.sizeOf(context).width * 0.37)
         .clamp(148.0, 156.0)
         .toDouble();
@@ -1105,9 +1072,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
       children: [
         _BalanceCard(customer: displayCustomer, heldPoints: held),
         const SizedBox(height: 18),
-        if (loading)
-          const Center(child: CircularProgressIndicator())
-        else if (banners.isNotEmpty)
+        if (banners.isNotEmpty)
           SizedBox(
             height: bannerHeight,
             child: PageView.builder(
@@ -1602,26 +1567,13 @@ class _CustomerRewardsPageState extends State<CustomerRewardsPage> {
   Future<void> _redeemProduct(Customer customer, DigitalProduct product) async {
     String? phone;
     if (product.requiresPhoneNumber) {
-      final controller = TextEditingController();
+      // The dialog widget owns its TextEditingController and disposes it in
+      // State.dispose(), so the exit animation can never touch a disposed
+      // controller.
       phone = await showDialog<String>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('رقم الهاتف'),
-          content: TextField(
-              controller: controller,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(hintText: '09xxxxxxxx')),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, controller.text),
-                child: const Text('تأكيد')),
-          ],
-        ),
+        builder: (_) => const _PhoneNumberDialog(),
       );
-      controller.dispose();
       if (phone == null || phone.trim().length < 8) return;
     }
     await widget.cubit.redeemDigitalProduct(product, phoneNumber: phone);
@@ -1652,6 +1604,42 @@ class _CustomerRewardsPageState extends State<CustomerRewardsPage> {
     }
     return 5;
   }
+}
+
+/// Phone-number prompt for digital product redemption. Owns its own
+/// TextEditingController lifecycle.
+class _PhoneNumberDialog extends StatefulWidget {
+  const _PhoneNumberDialog();
+
+  @override
+  State<_PhoneNumberDialog> createState() => _PhoneNumberDialogState();
+}
+
+class _PhoneNumberDialogState extends State<_PhoneNumberDialog> {
+  final controller = TextEditingController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('رقم الهاتف'),
+        content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(hintText: '09xxxxxxxx')),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('تأكيد')),
+        ],
+      );
 }
 
 class _SectionTitle extends StatelessWidget {

@@ -21,6 +21,15 @@ export class AdminListCashRequestsDto {
   status?: string;
 }
 
+export class AdminListTransactionsDto {
+  @Transform(({ value }) => Number(value))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 8;
+}
+
 export class AdjustCustomerPointsDto {
   @IsInt()
   @Min(1)

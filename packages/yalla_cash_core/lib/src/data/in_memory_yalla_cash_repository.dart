@@ -306,6 +306,14 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
       _store.customers.toList(growable: false);
 
   @override
+  Future<List<LoyaltyTransaction>> listAdminRecentTransactions(
+      {int limit = 8}) async {
+    final transactions = [..._store.transactions]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return transactions.take(limit).toList(growable: false);
+  }
+
+  @override
   Future<Customer> grantCustomerPoints({
     required String customerId,
     required int points,

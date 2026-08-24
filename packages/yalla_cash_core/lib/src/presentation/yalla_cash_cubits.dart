@@ -8,6 +8,21 @@ import 'package:yalla_cash_core/src/models.dart';
 
 const _unset = Object();
 
+/// Builds a user-visible failure for exceptions that are not
+/// [YallaCashFailure] (mapping bugs, unexpected runtime errors, ...).
+///
+/// These are logged and surfaced instead of being swallowed or crashing the
+/// whole app.
+YallaCashFailure _unexpectedFailure(Object error, StackTrace stackTrace) {
+  debugPrint('YALLA CASH UNEXPECTED ERROR: $error');
+  debugPrint('$stackTrace');
+  return YallaCashFailure(
+    code: 'unexpected_error',
+    message: 'حدث خطأ غير متوقع. حاول مرة أخرى.',
+    details: error,
+  );
+}
+
 class CustomerAppState extends Equatable {
   const CustomerAppState({
     this.status = LoadStatus.initial,
@@ -19,6 +34,7 @@ class CustomerAppState extends Equatable {
     this.transactions = const [],
     this.products = const [],
     this.cashRequests = const [],
+    this.banners = const [],
     this.failure,
   });
 
@@ -31,6 +47,10 @@ class CustomerAppState extends Equatable {
   final List<LoyaltyTransaction> transactions;
   final List<DigitalProduct> products;
   final List<CashRedemptionRequest> cashRequests;
+
+  /// Home-page banners. Owned by the Cubit (not local widget state) so that
+  /// every refresh() reflects the latest admin-managed banners.
+  final List<Banner> banners;
   final YallaCashFailure? failure;
 
   bool get isAuthenticated => session?.role == YallaUserRole.customer;
@@ -45,6 +65,7 @@ class CustomerAppState extends Equatable {
     List<LoyaltyTransaction>? transactions,
     List<DigitalProduct>? products,
     List<CashRedemptionRequest>? cashRequests,
+    List<Banner>? banners,
     Object? failure = _unset,
   }) =>
       CustomerAppState(
@@ -62,6 +83,7 @@ class CustomerAppState extends Equatable {
         transactions: transactions ?? this.transactions,
         products: products ?? this.products,
         cashRequests: cashRequests ?? this.cashRequests,
+        banners: banners ?? this.banners,
         failure: identical(failure, _unset)
             ? this.failure
             : failure as YallaCashFailure?,
@@ -78,6 +100,7 @@ class CustomerAppState extends Equatable {
         transactions,
         products,
         cashRequests,
+        banners,
         failure,
       ];
 }
@@ -100,15 +123,22 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
           transactions: results[3] as List<LoyaltyTransaction>,
           products: results[4] as List<DigitalProduct>,
           cashRequests: results[5] as List<CashRedemptionRequest>,
+          banners: results[6] as List<Banner>,
           failure: null,
         ),
       );
     } on YallaCashFailure catch (failure) {
       if (failure.statusCode == 401 || failure.code == 'unauthorized') {
+        // Invalid/expired session -> clean logout state (intentional).
         emit(const CustomerAppState());
         return;
       }
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
     }
   }
 
@@ -120,6 +150,12 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
       return challenge;
     } on YallaCashFailure catch (failure) {
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+      return null;
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
       return null;
     }
   }
@@ -174,6 +210,7 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
           transactions: results[3] as List<LoyaltyTransaction>,
           products: results[4] as List<DigitalProduct>,
           cashRequests: results[5] as List<CashRedemptionRequest>,
+          banners: results[6] as List<Banner>,
           failure: null,
         ),
       );
@@ -217,6 +254,8 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
     emit(const CustomerAppState());
   }
 
+  /// Loads every piece of customer data in parallel. Banners are included so
+  /// a single refresh() always reflects the latest server state.
   Future<List<Object>> _loadCustomerData() => Future.wait<Object>([
         _repository.getCustomerProfile(),
         _repository.getCustomerPoints(),
@@ -224,6 +263,7 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
         _repository.listCustomerTransactions(),
         _repository.listDigitalProducts(),
         _repository.listCustomerCashRequests(),
+        _repository.listActiveBanners(placement: 'HOME'),
       ]);
 
   Future<void> _run(Future<void> Function() action) async {
@@ -235,6 +275,12 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
       }
     } on YallaCashFailure catch (failure) {
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+    } on Object catch (error, stackTrace) {
+      // Surface unexpected errors visibly instead of crashing or hiding them.
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
     }
   }
 }
@@ -317,6 +363,11 @@ class MerchantAppCubit extends Cubit<MerchantAppState> {
         return;
       }
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
     }
   }
 
@@ -330,7 +381,11 @@ class MerchantAppCubit extends Cubit<MerchantAppState> {
         failure: null,
       ));
 
-      final session = await _repository.signInAdmin(
+      // FIX: merchant accounts must authenticate through the MERCHANT login
+      // endpoint (/auth/merchant/login). Calling signInAdmin here made the
+      // backend filter by role=ADMIN, so valid merchant credentials were
+      // always rejected with "Email or password is incorrect."
+      final session = await _repository.signInMerchant(
         email: email,
         password: password,
       );
@@ -346,6 +401,11 @@ class MerchantAppCubit extends Cubit<MerchantAppState> {
       emit(state.copyWith(
         status: LoadStatus.failure,
         failure: failure,
+      ));
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
       ));
     }
   }
@@ -412,6 +472,11 @@ class MerchantAppCubit extends Cubit<MerchantAppState> {
       }
     } on YallaCashFailure catch (failure) {
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
     }
   }
 }
@@ -427,6 +492,7 @@ class AdminAppState extends Equatable {
     this.cashRequests = const [],
     this.merchantAccounts = const [],
     this.settlements = const [],
+    this.recentTransactions = const [],
     this.pointValueSyp,
     this.failure,
   });
@@ -440,6 +506,10 @@ class AdminAppState extends Equatable {
   final List<CashRedemptionRequest> cashRequests;
   final List<MerchantAccount> merchantAccounts;
   final List<MerchantSettlementSummary> settlements;
+
+  /// Latest loyalty transactions shown in the overview "recent activity"
+  /// table. Previously this table rendered a hardcoded empty list.
+  final List<LoyaltyTransaction> recentTransactions;
   final int? pointValueSyp;
   final YallaCashFailure? failure;
 
@@ -455,6 +525,7 @@ class AdminAppState extends Equatable {
     List<CashRedemptionRequest>? cashRequests,
     List<MerchantAccount>? merchantAccounts,
     List<MerchantSettlementSummary>? settlements,
+    List<LoyaltyTransaction>? recentTransactions,
     Object? pointValueSyp = _unset,
     Object? failure = _unset,
   }) =>
@@ -471,6 +542,7 @@ class AdminAppState extends Equatable {
         cashRequests: cashRequests ?? this.cashRequests,
         merchantAccounts: merchantAccounts ?? this.merchantAccounts,
         settlements: settlements ?? this.settlements,
+        recentTransactions: recentTransactions ?? this.recentTransactions,
         pointValueSyp: identical(pointValueSyp, _unset)
             ? this.pointValueSyp
             : pointValueSyp as int?,
@@ -490,6 +562,7 @@ class AdminAppState extends Equatable {
         cashRequests,
         merchantAccounts,
         settlements,
+        recentTransactions,
         pointValueSyp,
         failure,
       ];
@@ -499,6 +572,15 @@ class AdminAppCubit extends Cubit<AdminAppState> {
   AdminAppCubit(this._repository) : super(const AdminAppState());
 
   final YallaCashRepository _repository;
+
+  /// Monotonic refresh generation counter.
+  ///
+  /// Every refresh() call takes the next generation id; only the result of
+  /// the LATEST generation may be emitted. Older concurrent refreshes are
+  /// discarded when they finish late, so a stale snapshot can never
+  /// overwrite newer state (e.g. resurrecting deleted rows or hiding new
+  /// ones until an arbitrary later refresh).
+  int _refreshGeneration = 0;
 
   Future<void> signIn({
     required String email,
@@ -513,6 +595,7 @@ class AdminAppCubit extends Cubit<AdminAppState> {
   }
 
   Future<void> refresh() async {
+    final generation = ++_refreshGeneration;
     try {
       emit(state.copyWith(status: LoadStatus.loading, failure: null));
 
@@ -525,7 +608,12 @@ class AdminAppCubit extends Cubit<AdminAppState> {
         _repository.listMerchantAccounts(),
         _repository.listSettlements(),
         _repository.getPointValue(),
+        _repository.listAdminRecentTransactions(limit: 8),
       ]);
+
+      // A newer refresh has started while this one was in flight: discard
+      // this stale snapshot entirely.
+      if (generation != _refreshGeneration) return;
 
       emit(
         state.copyWith(
@@ -538,87 +626,83 @@ class AdminAppCubit extends Cubit<AdminAppState> {
           merchantAccounts: results[5] as List<MerchantAccount>,
           settlements: results[6] as List<MerchantSettlementSummary>,
           pointValueSyp: results[7] as int,
+          recentTransactions: results[8] as List<LoyaltyTransaction>,
           failure: null,
         ),
       );
-    } catch (error, stackTrace) {
-      debugPrint('ADMIN REFRESH ERROR: $error');
-      debugPrint('$stackTrace');
-
-      // Keep the current dashboard data instead of crashing the admin panel.
+    } on YallaCashFailure catch (failure) {
+      if (generation != _refreshGeneration) return;
+      // Keep the currently displayed data, but DO NOT fake success: the
+      // failure is stored in state so the UI can surface it.
       emit(
         state.copyWith(
-          status: LoadStatus.success,
+          status: LoadStatus.failure,
+          failure: failure,
+        ),
+      );
+    } on Object catch (error, stackTrace) {
+      if (generation != _refreshGeneration) return;
+      emit(
+        state.copyWith(
+          status: LoadStatus.failure,
+          failure: _unexpectedFailure(error, stackTrace),
         ),
       );
     }
   }
 
-  Future<void> grantPoints(Customer customer, int points, String note) async {
-    await _run(() async {
-      await _repository.grantCustomerPoints(
-        customerId: customer.id,
-        points: points,
-        note: note,
-      );
-      await refresh();
-    });
-  }
+  Future<bool> grantPoints(Customer customer, int points, String note) =>
+      _run(() async {
+        await _repository.grantCustomerPoints(
+          customerId: customer.id,
+          points: points,
+          note: note,
+        );
+        await refresh();
+      });
 
-  Future<void> deductPoints(Customer customer, int points, String note) async {
-    await _run(() async {
-      await _repository.deductCustomerPoints(
-        customerId: customer.id,
-        points: points,
-        note: note,
-      );
-      await refresh();
-    });
-  }
+  Future<bool> deductPoints(Customer customer, int points, String note) =>
+      _run(() async {
+        await _repository.deductCustomerPoints(
+          customerId: customer.id,
+          points: points,
+          note: note,
+        );
+        await refresh();
+      });
 
-  Future<void> deleteCustomer(Customer customer) async {
-    await _run(() async {
-      await _repository.deleteCustomer(customer.id);
-      await refresh();
-    });
-  }
+  Future<bool> deleteCustomer(Customer customer) => _run(() async {
+        await _repository.deleteCustomer(customer.id);
+        await refresh();
+      });
 
-  Future<void> resolveCashRequest(
-      CashRedemptionRequest request, bool approve) async {
-    await _run(() async {
-      await _repository.resolveCashRequest(
-          requestId: request.id, approve: approve);
-      await refresh();
-    });
-  }
+  Future<bool> resolveCashRequest(
+          CashRedemptionRequest request, bool approve) =>
+      _run(() async {
+        await _repository.resolveCashRequest(
+            requestId: request.id, approve: approve);
+        await refresh();
+      });
 
-  Future<void> createStore(PartnerStore store) async {
-    await _run(() async {
-      await _repository.createStore(store);
-      await refresh();
-    });
-  }
+  Future<bool> createStore(PartnerStore store) => _run(() async {
+        await _repository.createStore(store);
+        await refresh();
+      });
 
-  Future<void> updateStore(PartnerStore store) async {
-    await _run(() async {
-      await _repository.updateStore(store);
-      await refresh();
-    });
-  }
+  Future<bool> updateStore(PartnerStore store) => _run(() async {
+        await _repository.updateStore(store);
+        await refresh();
+      });
 
-  Future<void> createProduct(DigitalProduct product) async {
-    await _run(() async {
-      await _repository.createProduct(product);
-      await refresh();
-    });
-  }
+  Future<bool> createProduct(DigitalProduct product) => _run(() async {
+        await _repository.createProduct(product);
+        await refresh();
+      });
 
-  Future<void> updateProduct(DigitalProduct product) async {
-    await _run(() async {
-      await _repository.updateProduct(product);
-      await refresh();
-    });
-  }
+  Future<bool> updateProduct(DigitalProduct product) => _run(() async {
+        await _repository.updateProduct(product);
+        await refresh();
+      });
 
   Future<IssuedMerchantAccount?> createMerchantAccount({
     required String storeId,
@@ -639,42 +723,58 @@ class AdminAppCubit extends Cubit<AdminAppState> {
     } on YallaCashFailure catch (failure) {
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
       return null;
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
+      return null;
     }
   }
 
-  Future<void> settleStore(MerchantSettlementSummary settlement) async {
-    await _run(() async {
-      await _repository.settleStore(
-        storeId: settlement.storeId,
-        periodStart: settlement.periodStart,
-        periodEnd: settlement.periodEnd,
-      );
-      await refresh();
-    });
-  }
+  Future<bool> settleStore(MerchantSettlementSummary settlement) =>
+      _run(() async {
+        await _repository.settleStore(
+          storeId: settlement.storeId,
+          periodStart: settlement.periodStart,
+          periodEnd: settlement.periodEnd,
+        );
+        await refresh();
+      });
 
-  Future<void> updatePointValue(int pointValueSyp) async {
-    await _run(() async {
-      final value = await _repository.updatePointValue(pointValueSyp);
-      emit(state.copyWith(pointValueSyp: value));
-      await refresh();
-    });
-  }
+  Future<bool> updatePointValue(int pointValueSyp) => _run(() async {
+        final value = await _repository.updatePointValue(pointValueSyp);
+        emit(state.copyWith(pointValueSyp: value));
+        await refresh();
+      });
 
   Future<void> logout() async {
     await _repository.logout();
     emit(const AdminAppState());
   }
 
-  Future<void> _run(Future<void> Function() action) async {
+  /// Runs [action], emitting loading/success/failure states.
+  ///
+  /// Returns true only when the whole action (including its trailing
+  /// refresh) completed without failure, so callers can distinguish real
+  /// success from silent failures.
+  Future<bool> _run(Future<void> Function() action) async {
     try {
       emit(state.copyWith(status: LoadStatus.loading, failure: null));
       await action();
       if (state.status == LoadStatus.loading) {
         emit(state.copyWith(status: LoadStatus.success, failure: null));
       }
+      return state.failure == null;
     } on YallaCashFailure catch (failure) {
       emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+      return false;
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
+      return false;
     }
   }
 }

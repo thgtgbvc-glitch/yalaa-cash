@@ -483,16 +483,26 @@ class AdminOverview extends StatelessWidget {
               DataColumn(label: Text('النقاط')),
               DataColumn(label: Text('التاريخ'))
             ],
-            rows: const <LoyaltyTransaction>[]
-                .take(8)
-                .map((item) => DataRow(cells: [
-                      DataCell(Text(item.storeName)),
-                      DataCell(Text('${formatNumber(item.amountSyp)} ل.س')),
-                      DataCell(
-                          Text('+${formatNumber(item.customerPointsEarned)}')),
-                      DataCell(Text(formatDate(item.createdAt))),
-                    ]))
-                .toList(),
+            // Wired to real data: latest loyalty transactions loaded by
+            // AdminAppCubit.refresh() (previously a hardcoded empty list).
+            rows: state.recentTransactions.isEmpty
+                ? const [
+                    DataRow(cells: [
+                      DataCell(Text('لا توجد عمليات بعد')),
+                      DataCell(Text('')),
+                      DataCell(Text('')),
+                      DataCell(Text('')),
+                    ])
+                  ]
+                : state.recentTransactions
+                    .map((item) => DataRow(cells: [
+                          DataCell(Text(item.storeName)),
+                          DataCell(Text('${formatNumber(item.amountSyp)} ل.س')),
+                          DataCell(Text(
+                              '+${formatNumber(item.customerPointsEarned)}')),
+                          DataCell(Text(formatDate(item.createdAt))),
+                        ]))
+                    .toList(),
           ),
         ),
       ],
@@ -630,30 +640,17 @@ class CustomersAdmin extends StatelessWidget {
 
   Future<void> _pointsDialog(
       BuildContext context, Customer customer, bool grant) async {
-    final controller = TextEditingController();
+    // The dialog widget owns its TextEditingController (disposed in its
+    // State.dispose), so popping the dialog can never leave the exit
+    // animation referencing a disposed controller.
     final points = await showDialog<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(grant
+      builder: (_) => _PointsInputDialog(
+        title: grant
             ? 'منح نقاط إلى ${customer.name}'
-            : 'خصم نقاط من ${customer.name}'),
-        content: TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'عدد النقاط')),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء')),
-          FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, int.tryParse(controller.text)),
-              child: const Text('تأكيد')),
-        ],
+            : 'خصم نقاط من ${customer.name}',
       ),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     if (points == null || points <= 0) return;
     if (grant) {
       await cubit.grantPoints(customer, points, _adminPointAdjustmentNote);
@@ -681,6 +678,47 @@ class CustomersAdmin extends StatelessWidget {
     );
     if (confirmed == true) await cubit.deleteCustomer(customer);
   }
+}
+
+/// Points add/deduct prompt. Owns its TextEditingController lifecycle.
+class _PointsInputDialog extends StatefulWidget {
+  const _PointsInputDialog({required this.title});
+
+  final String title;
+
+  @override
+  State<_PointsInputDialog> createState() => _PointsInputDialogState();
+}
+
+class _PointsInputDialogState extends State<_PointsInputDialog> {
+  final controller = TextEditingController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'عدد النقاط'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, int.tryParse(controller.text)),
+            child: const Text('تأكيد'),
+          ),
+        ],
+      );
 }
 
 class GovernoratesAdmin extends StatefulWidget {
@@ -713,7 +751,16 @@ class _GovernoratesAdminState extends State<GovernoratesAdmin> {
         loading = false;
         error = null;
       });
-    } catch (_) {
+    } on YallaCashFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error =
+            failure.message.isEmpty ? 'تعذر تحميل المحافظات.' : failure.message;
+      });
+    } on Object catch (error_, stackTrace) {
+      debugPrint('GOVERNORATES LOAD ERROR: $error_');
+      debugPrint('$stackTrace');
       if (!mounted) return;
       setState(() {
         loading = false;
@@ -783,72 +830,155 @@ class _GovernoratesAdminState extends State<GovernoratesAdmin> {
       );
 
   Future<void> _toggle(Governorate item, bool isActive) async {
-    await widget.repository
-        .updateGovernorate(item.copyWith(isActive: isActive));
-    await _refresh();
+    try {
+      await widget.repository
+          .updateGovernorate(item.copyWith(isActive: isActive));
+      await _refresh();
+    } on YallaCashFailure catch (failure) {
+      if (!mounted) return;
+      setState(() => error = failure.message.isEmpty
+          ? 'تعذر تحديث حالة المحافظة.'
+          : failure.message);
+    } on Object catch (error_, stackTrace) {
+      debugPrint('GOVERNORATE TOGGLE ERROR: $error_');
+      debugPrint('$stackTrace');
+      if (!mounted) return;
+      setState(() => error = 'تعذر تحديث حالة المحافظة.');
+    }
   }
 
   Future<void> _editGovernorate(BuildContext context,
       [Governorate? item]) async {
-    final name = TextEditingController(text: item?.nameAr ?? '');
-    final order = TextEditingController(
-        text: '${item?.displayOrder ?? (items.length + 1)}');
-    var active = item?.isActive ?? false;
-    final saved = await showDialog<bool>(
+    // The editor dialog owns its TextEditingControllers; it returns a plain
+    // result object so the caller never touches a controller after pop.
+    final result = await showDialog<_GovernorateEditorResult>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(item == null ? 'إضافة محافظة' : 'تعديل المحافظة'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'اسم المحافظة')),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: order,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'ترتيب الظهور')),
-              SwitchListTile(
-                  value: active,
-                  onChanged: (value) => setDialogState(() => active = value),
-                  title: const Text('نشطة')),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('إلغاء')),
-            FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('حفظ')),
-          ],
-        ),
+      builder: (_) => _GovernorateEditorDialog(
+        item: item,
+        nextDisplayOrder: items.length + 1,
       ),
     );
-    final nameValue = name.text.trim();
-    final orderValue = int.tryParse(order.text) ?? items.length + 1;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      name.dispose();
-      order.dispose();
-    });
-    if (saved != true || nameValue.isEmpty) return;
+    if (result == null || result.nameAr.isEmpty) return;
     final next = Governorate(
       id: item?.id ?? 'gov-${DateTime.now().microsecondsSinceEpoch}',
-      nameAr: nameValue,
-      isActive: active,
-      displayOrder: orderValue,
+      nameAr: result.nameAr,
+      isActive: result.isActive,
+      displayOrder: result.displayOrder,
       createdAt: item?.createdAt ?? DateTime.now(),
       updatedAt: DateTime.now(),
     );
-    if (item == null) {
-      await widget.repository.createGovernorate(next);
-    } else {
-      await widget.repository.updateGovernorate(next);
+    try {
+      if (item == null) {
+        await widget.repository.createGovernorate(next);
+      } else {
+        await widget.repository.updateGovernorate(next);
+      }
+      await _refresh();
+    } on YallaCashFailure catch (failure) {
+      if (!mounted) return;
+      setState(() => error =
+          failure.message.isEmpty ? 'تعذر حفظ المحافظة.' : failure.message);
+    } on Object catch (error_, stackTrace) {
+      debugPrint('GOVERNORATE SAVE ERROR: $error_');
+      debugPrint('$stackTrace');
+      if (!mounted) return;
+      setState(() => error = 'تعذر حفظ المحافظة.');
     }
-    await _refresh();
   }
+}
+
+class _GovernorateEditorResult {
+  const _GovernorateEditorResult({
+    required this.nameAr,
+    required this.displayOrder,
+    required this.isActive,
+  });
+
+  final String nameAr;
+  final int displayOrder;
+  final bool isActive;
+}
+
+/// Add/edit governorate prompt. Owns its TextEditingController lifecycle.
+class _GovernorateEditorDialog extends StatefulWidget {
+  const _GovernorateEditorDialog({
+    required this.item,
+    required this.nextDisplayOrder,
+  });
+
+  final Governorate? item;
+  final int nextDisplayOrder;
+
+  @override
+  State<_GovernorateEditorDialog> createState() =>
+      _GovernorateEditorDialogState();
+}
+
+class _GovernorateEditorDialogState extends State<_GovernorateEditorDialog> {
+  late final name = TextEditingController(text: widget.item?.nameAr ?? '');
+  late final order = TextEditingController(
+      text: '${widget.item?.displayOrder ?? widget.nextDisplayOrder}');
+  late var active = widget.item?.isActive ?? false;
+  String? errorMessage;
+
+  @override
+  void dispose() {
+    name.dispose();
+    order.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final nameValue = name.text.trim();
+    if (nameValue.isEmpty) {
+      setState(() => errorMessage = 'أدخل اسم المحافظة.');
+      return;
+    }
+    Navigator.pop(
+      context,
+      _GovernorateEditorResult(
+        nameAr: nameValue,
+        displayOrder: int.tryParse(order.text) ?? widget.nextDisplayOrder,
+        isActive: active,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.item == null ? 'إضافة محافظة' : 'تعديل المحافظة'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+                controller: name,
+                autofocus: widget.item == null,
+                decoration: const InputDecoration(labelText: 'اسم المحافظة')),
+            const SizedBox(height: 12),
+            TextField(
+                controller: order,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'ترتيب الظهور')),
+            SwitchListTile(
+                value: active,
+                onChanged: (value) => setState(() => active = value),
+                title: const Text('نشطة')),
+            if (errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(errorMessage!,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(onPressed: _save, child: const Text('حفظ')),
+        ],
+      );
 }
 
 class BannersAdmin extends StatefulWidget {
@@ -888,7 +1018,16 @@ class _BannersAdminState extends State<BannersAdmin> {
         loading = false;
         error = null;
       });
-    } catch (_) {
+    } on YallaCashFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error =
+            failure.message.isEmpty ? 'تعذر تحميل الإعلانات.' : failure.message;
+      });
+    } on Object catch (error_, stackTrace) {
+      debugPrint('BANNERS LOAD ERROR: $error_');
+      debugPrint('$stackTrace');
       if (!mounted) return;
       setState(() {
         loading = false;
@@ -1012,7 +1151,12 @@ class _BannersAdminState extends State<BannersAdmin> {
     try {
       await widget.repository.deleteBanner(item.id);
       await _refresh();
-    } catch (_) {
+    } on YallaCashFailure catch (failure) {
+      _showBannerSnack(
+          failure.message.isEmpty ? 'تعذر حذف الإعلان.' : failure.message);
+    } on Object catch (error_, stackTrace) {
+      debugPrint('BANNER DELETE ERROR: $error_');
+      debugPrint('$stackTrace');
       _showBannerSnack('تعذر حذف الإعلان.');
     }
   }
@@ -1021,7 +1165,15 @@ class _BannersAdminState extends State<BannersAdmin> {
     try {
       await widget.repository.updateBanner(item.copyWith(isActive: isActive));
       await _refresh();
-    } catch (_) {
+    } on YallaCashFailure catch (failure) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(failure.message.isEmpty
+              ? 'تعذر تحديث حالة الإعلان.'
+              : failure.message)));
+    } on Object catch (error_, stackTrace) {
+      debugPrint('BANNER TOGGLE ERROR: $error_');
+      debugPrint('$stackTrace');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تعذر تحديث حالة الإعلان.')));
@@ -1029,131 +1181,31 @@ class _BannersAdminState extends State<BannersAdmin> {
   }
 
   Future<void> _editBanner(BuildContext context, [core.Banner? item]) async {
-    final title = TextEditingController(text: item?.title ?? '');
-    final subtitle = TextEditingController(text: item?.subtitle ?? '');
-    final imageUrl = TextEditingController(text: item?.imageUrl ?? '');
-    final targetUrl = TextEditingController(text: item?.targetUrl ?? '');
-    final order = TextEditingController(
-        text: '${item?.displayOrder ?? (items.length + 1)}');
-    final startsAt =
-        TextEditingController(text: item?.startsAt?.toIso8601String() ?? '');
-    final endsAt =
-        TextEditingController(text: item?.endsAt?.toIso8601String() ?? '');
-    var active = item?.isActive ?? true;
-    var governorateChoice = item?.governorateId ?? allGovernoratesValue;
-
-    final saved = await showDialog<bool>(
+    // The editor dialog owns its seven TextEditingControllers; it returns a
+    // plain result object so the caller never reads a controller after pop.
+    final result = await showDialog<_BannerEditorResult>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(item == null ? 'إضافة إعلان' : 'تعديل الإعلان'),
-          content: SizedBox(
-            width: 560,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                      controller: title,
-                      decoration: const InputDecoration(labelText: 'العنوان')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: subtitle,
-                      decoration:
-                          const InputDecoration(labelText: 'العنوان الفرعي')),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: imageUrl,
-                    decoration: const InputDecoration(labelText: 'رابط الصورة'),
-                    onChanged: (_) => setDialogState(() {}),
-                  ),
-                  if (imageUrl.text.trim().isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    _BannerImagePreview(url: imageUrl.text.trim()),
-                  ],
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: targetUrl,
-                      decoration:
-                          const InputDecoration(labelText: 'رابط الهدف')),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: governorateChoice,
-                    decoration: const InputDecoration(labelText: 'المحافظة'),
-                    items: [
-                      const DropdownMenuItem(
-                          value: allGovernoratesValue,
-                          child: Text('كل المحافظات')),
-                      ...governorates.map(
-                        (governorate) => DropdownMenuItem(
-                            value: governorate.id,
-                            child: Text(governorate.nameAr)),
-                      ),
-                    ],
-                    onChanged: (value) => setDialogState(() =>
-                        governorateChoice = value ?? allGovernoratesValue),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: order,
-                      keyboardType: TextInputType.number,
-                      decoration:
-                          const InputDecoration(labelText: 'ترتيب الظهور')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: startsAt,
-                      decoration: const InputDecoration(
-                          labelText: 'وقت البداية اختياري ISO')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: endsAt,
-                      decoration: const InputDecoration(
-                          labelText: 'وقت النهاية اختياري ISO')),
-                  SwitchListTile(
-                    value: active,
-                    onChanged: (value) => setDialogState(() => active = value),
-                    title: const Text('نشط'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('إلغاء')),
-            FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('حفظ')),
-          ],
-        ),
+      builder: (_) => _BannerEditorDialog(
+        item: item,
+        nextDisplayOrder: items.length + 1,
+        governorates: governorates,
+        allGovernoratesValue: allGovernoratesValue,
       ),
     );
+    if (result == null) return;
 
-    final titleValue = title.text.trim();
-    final subtitleValue = subtitle.text.trim();
-    final imageUrlValue = imageUrl.text.trim();
-    final targetUrlValue = targetUrl.text.trim();
-    final orderValue = int.tryParse(order.text) ?? items.length + 1;
-    final startsAtValue = _parseOptionalDate(startsAt.text);
-    final endsAtValue = _parseOptionalDate(endsAt.text);
+    final startsAtValue = _parseOptionalDate(result.startsAtText);
+    final endsAtValue = _parseOptionalDate(result.endsAtText);
     final startsAtInvalid =
-        startsAt.text.trim().isNotEmpty && startsAtValue == null;
-    final endsAtInvalid = endsAt.text.trim().isNotEmpty && endsAtValue == null;
-    title.dispose();
-    subtitle.dispose();
-    imageUrl.dispose();
-    targetUrl.dispose();
-    order.dispose();
-    startsAt.dispose();
-    endsAt.dispose();
+        result.startsAtText.trim().isNotEmpty && startsAtValue == null;
+    final endsAtInvalid =
+        result.endsAtText.trim().isNotEmpty && endsAtValue == null;
 
-    if (saved != true) return;
-    if (titleValue.isEmpty || imageUrlValue.isEmpty) {
+    if (result.title.isEmpty || result.imageUrl.isEmpty) {
       _showBannerSnack('أدخل عنوان الإعلان ورابط الصورة.');
       return;
     }
-    if (!_isWebImageUrl(imageUrlValue)) {
+    if (!_isWebImageUrl(result.imageUrl)) {
       _showBannerSnack('رابط الصورة يجب أن يبدأ بـ http أو https.');
       return;
     }
@@ -1170,16 +1222,17 @@ class _BannersAdminState extends State<BannersAdmin> {
 
     final next = core.Banner(
       id: item?.id ?? 'banner-${DateTime.now().microsecondsSinceEpoch}',
-      title: titleValue,
-      subtitle: subtitleValue.isEmpty ? null : subtitleValue,
-      imageUrl: imageUrlValue,
-      targetUrl: targetUrlValue.isEmpty ? null : targetUrlValue,
+      title: result.title,
+      subtitle: result.subtitle.isEmpty ? null : result.subtitle,
+      imageUrl: result.imageUrl,
+      targetUrl: result.targetUrl.isEmpty ? null : result.targetUrl,
       placement: item?.placement ?? 'home',
       style: item?.style ?? 'promo',
-      isActive: active,
-      displayOrder: orderValue,
-      governorateId:
-          governorateChoice == allGovernoratesValue ? null : governorateChoice,
+      isActive: result.isActive,
+      displayOrder: result.displayOrder,
+      governorateId: result.governorateId == allGovernoratesValue
+          ? null
+          : result.governorateId,
       startsAt: startsAtValue,
       endsAt: endsAtValue,
       createdAt: item?.createdAt ?? DateTime.now(),
@@ -1193,7 +1246,12 @@ class _BannersAdminState extends State<BannersAdmin> {
         await widget.repository.updateBanner(next);
       }
       await _refresh();
-    } catch (_) {
+    } on YallaCashFailure catch (failure) {
+      _showBannerSnack(
+          failure.message.isEmpty ? 'تعذر حفظ الإعلان.' : failure.message);
+    } on Object catch (error_, stackTrace) {
+      debugPrint('BANNER SAVE ERROR: $error_');
+      debugPrint('$stackTrace');
       _showBannerSnack('تعذر حفظ الإعلان.');
     }
   }
@@ -1216,6 +1274,177 @@ class _BannersAdminState extends State<BannersAdmin> {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
+}
+
+class _BannerEditorResult {
+  const _BannerEditorResult({
+    required this.title,
+    required this.subtitle,
+    required this.imageUrl,
+    required this.targetUrl,
+    required this.displayOrder,
+    required this.startsAtText,
+    required this.endsAtText,
+    required this.isActive,
+    required this.governorateId,
+  });
+
+  final String title;
+  final String subtitle;
+  final String imageUrl;
+  final String targetUrl;
+  final int displayOrder;
+  final String startsAtText;
+  final String endsAtText;
+  final bool isActive;
+  final String governorateId;
+}
+
+/// Add/edit banner prompt. Owns its TextEditingController lifecycle.
+class _BannerEditorDialog extends StatefulWidget {
+  const _BannerEditorDialog({
+    required this.item,
+    required this.nextDisplayOrder,
+    required this.governorates,
+    required this.allGovernoratesValue,
+  });
+
+  final core.Banner? item;
+  final int nextDisplayOrder;
+  final List<Governorate> governorates;
+  final String allGovernoratesValue;
+
+  @override
+  State<_BannerEditorDialog> createState() => _BannerEditorDialogState();
+}
+
+class _BannerEditorDialogState extends State<_BannerEditorDialog> {
+  late final title = TextEditingController(text: widget.item?.title ?? '');
+  late final subtitle =
+      TextEditingController(text: widget.item?.subtitle ?? '');
+  late final imageUrl =
+      TextEditingController(text: widget.item?.imageUrl ?? '');
+  late final targetUrl =
+      TextEditingController(text: widget.item?.targetUrl ?? '');
+  late final order = TextEditingController(
+      text: '${widget.item?.displayOrder ?? widget.nextDisplayOrder}');
+  late final startsAt = TextEditingController(
+      text: widget.item?.startsAt?.toIso8601String() ?? '');
+  late final endsAt =
+      TextEditingController(text: widget.item?.endsAt?.toIso8601String() ?? '');
+  late var active = widget.item?.isActive ?? true;
+  late var governorateChoice =
+      widget.item?.governorateId ?? widget.allGovernoratesValue;
+
+  @override
+  void dispose() {
+    title.dispose();
+    subtitle.dispose();
+    imageUrl.dispose();
+    targetUrl.dispose();
+    order.dispose();
+    startsAt.dispose();
+    endsAt.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    Navigator.pop(
+      context,
+      _BannerEditorResult(
+        title: title.text.trim(),
+        subtitle: subtitle.text.trim(),
+        imageUrl: imageUrl.text.trim(),
+        targetUrl: targetUrl.text.trim(),
+        displayOrder: int.tryParse(order.text) ?? widget.nextDisplayOrder,
+        startsAtText: startsAt.text,
+        endsAtText: endsAt.text,
+        isActive: active,
+        governorateId: governorateChoice,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.item == null ? 'إضافة إعلان' : 'تعديل الإعلان'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                    controller: title,
+                    decoration: const InputDecoration(labelText: 'العنوان')),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: subtitle,
+                    decoration:
+                        const InputDecoration(labelText: 'العنوان الفرعي')),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: imageUrl,
+                  decoration: const InputDecoration(labelText: 'رابط الصورة'),
+                  onChanged: (_) => setState(() {}),
+                ),
+                if (imageUrl.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _BannerImagePreview(url: imageUrl.text.trim()),
+                ],
+                const SizedBox(height: 10),
+                TextField(
+                    controller: targetUrl,
+                    decoration: const InputDecoration(labelText: 'رابط الهدف')),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: governorateChoice,
+                  decoration: const InputDecoration(labelText: 'المحافظة'),
+                  items: [
+                    DropdownMenuItem(
+                        value: widget.allGovernoratesValue,
+                        child: const Text('كل المحافظات')),
+                    ...widget.governorates.map(
+                      (governorate) => DropdownMenuItem(
+                          value: governorate.id,
+                          child: Text(governorate.nameAr)),
+                    ),
+                  ],
+                  onChanged: (value) => setState(() =>
+                      governorateChoice = value ?? widget.allGovernoratesValue),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: order,
+                    keyboardType: TextInputType.number,
+                    decoration:
+                        const InputDecoration(labelText: 'ترتيب الظهور')),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: startsAt,
+                    decoration: const InputDecoration(
+                        labelText: 'وقت البداية اختياري ISO')),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: endsAt,
+                    decoration: const InputDecoration(
+                        labelText: 'وقت النهاية اختياري ISO')),
+                SwitchListTile(
+                  value: active,
+                  onChanged: (value) => setState(() => active = value),
+                  title: const Text('نشط'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(onPressed: _save, child: const Text('حفظ')),
+        ],
+      );
 }
 
 class _BannerImageThumb extends StatelessWidget {
@@ -1383,15 +1612,73 @@ class _StoreAdminCard extends StatelessWidget {
       );
 
   Future<void> _edit(BuildContext context) async {
-    final name = TextEditingController(text: partner.name);
-    final category = TextEditingController(text: partner.category);
-    final rate = TextEditingController(text: partner.commissionRate.toString());
-    final location = TextEditingController(text: partner.location);
-    final description = TextEditingController(text: partner.description);
-    final updated = await showDialog<PartnerStore>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('تعديل المحل'),
+    final updated = await _showStoreEditor(context, partner: partner);
+    if (updated != null) await cubit.updateStore(updated);
+  }
+}
+
+Future<PartnerStore?> _showStoreEditor(
+  BuildContext context, {
+  PartnerStore? partner,
+}) {
+  // The editor dialog owns its TextEditingControllers and builds the
+  // resulting PartnerStore itself; no controller outlives the dialog route.
+  return showDialog<PartnerStore>(
+    context: context,
+    builder: (_) => _StoreEditorDialog(partner: partner),
+  );
+}
+
+/// Create/edit store prompt. Owns its TextEditingController lifecycle.
+class _StoreEditorDialog extends StatefulWidget {
+  const _StoreEditorDialog({this.partner});
+
+  final PartnerStore? partner;
+
+  @override
+  State<_StoreEditorDialog> createState() => _StoreEditorDialogState();
+}
+
+class _StoreEditorDialogState extends State<_StoreEditorDialog> {
+  late final name = TextEditingController(text: widget.partner?.name);
+  late final category = TextEditingController(text: widget.partner?.category);
+  late final rate =
+      TextEditingController(text: widget.partner?.commissionRate.toString());
+  late final location = TextEditingController(text: widget.partner?.location);
+  late final description =
+      TextEditingController(text: widget.partner?.description);
+
+  @override
+  void dispose() {
+    name.dispose();
+    category.dispose();
+    rate.dispose();
+    location.dispose();
+    description.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    Navigator.pop(
+      context,
+      PartnerStore(
+        id: widget.partner?.id ?? 'store-$now',
+        name: name.text.trim(),
+        category: category.text.trim(),
+        commissionRate:
+            double.tryParse(rate.text) ?? widget.partner?.commissionRate ?? 0,
+        description: description.text.trim(),
+        location: location.text.trim(),
+        iconSeed: widget.partner?.iconSeed ?? now.remainder(100000),
+        isActive: widget.partner?.isActive ?? true,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.partner == null ? 'إضافة محل' : 'تعديل المحل'),
         content: SizedBox(
           width: 520,
           child: SingleChildScrollView(
@@ -1425,29 +1712,9 @@ class _StoreAdminCard extends StatelessWidget {
           TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-                context,
-                partner.copyWith(
-                    name: name.text.trim(),
-                    category: category.text.trim(),
-                    commissionRate:
-                        double.tryParse(rate.text) ?? partner.commissionRate,
-                    location: location.text.trim(),
-                    description: description.text.trim())),
-            child: const Text('حفظ'),
-          ),
+          FilledButton(onPressed: _save, child: const Text('حفظ')),
         ],
-      ),
-    );
-    name.dispose();
-    category.dispose();
-    rate.dispose();
-    location.dispose();
-    description.dispose();
-
-    if (updated != null) await cubit.updateStore(updated);
-  }
+      );
 }
 
 class ProductsAdmin extends StatelessWidget {
@@ -1501,60 +1768,10 @@ class ProductsAdmin extends StatelessWidget {
 
   Future<void> _editProduct(
       BuildContext context, DigitalProduct product) async {
-    final name = TextEditingController(text: product.name);
-    final cost = TextEditingController(text: product.costInPoints.toString());
-    var needsPhone = product.requiresPhoneNumber;
-    var active = product.isActive;
     final updated = await showDialog<DigitalProduct>(
       context: context,
-      builder: (context) => StatefulBuilder(
-          builder: (context, setLocalState) => AlertDialog(
-                title: const Text('تعديل المنتج'),
-                content: SizedBox(
-                    width: 460,
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      TextField(
-                          controller: name,
-                          decoration:
-                              const InputDecoration(labelText: 'اسم المنتج')),
-                      const SizedBox(height: 10),
-                      TextField(
-                          controller: cost,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                              labelText: 'التكلفة بالنقاط')),
-                      SwitchListTile(
-                          value: needsPhone,
-                          onChanged: (value) =>
-                              setLocalState(() => needsPhone = value),
-                          title: const Text('يتطلب رقم هاتف')),
-                      SwitchListTile(
-                          value: active,
-                          onChanged: (value) =>
-                              setLocalState(() => active = value),
-                          title: const Text('المنتج نشط')),
-                    ])),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('إلغاء')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(
-                          context,
-                          product.copyWith(
-                              name: name.text.trim(),
-                              costInPoints: int.tryParse(cost.text) ??
-                                  product.costInPoints,
-                              requiresPhoneNumber: needsPhone,
-                              isActive: active)),
-                      child: const Text('حفظ')),
-                ],
-              )),
+      builder: (_) => _ProductEditorDialog(product: product),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      name.dispose();
-      cost.dispose();
-    });
     if (updated != null) await cubit.updateProduct(updated);
   }
 
@@ -1562,6 +1779,90 @@ class ProductsAdmin extends StatelessWidget {
     final created = await _showProductEditor(context);
     if (created != null) await cubit.createProduct(created);
   }
+}
+
+Future<DigitalProduct?> _showProductEditor(
+  BuildContext context, [
+  DigitalProduct? product,
+]) {
+  return showDialog<DigitalProduct>(
+    context: context,
+    builder: (_) => _ProductEditorDialog(product: product),
+  );
+}
+
+/// Create/edit product prompt. Owns its TextEditingController lifecycle.
+class _ProductEditorDialog extends StatefulWidget {
+  const _ProductEditorDialog({this.product});
+
+  final DigitalProduct? product;
+
+  @override
+  State<_ProductEditorDialog> createState() => _ProductEditorDialogState();
+}
+
+class _ProductEditorDialogState extends State<_ProductEditorDialog> {
+  late final name = TextEditingController(text: widget.product?.name);
+  late final cost =
+      TextEditingController(text: widget.product?.costInPoints.toString());
+  late var needsPhone = widget.product?.requiresPhoneNumber ?? false;
+  late var active = widget.product?.isActive ?? true;
+
+  @override
+  void dispose() {
+    name.dispose();
+    cost.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    Navigator.pop(
+      context,
+      DigitalProduct(
+        id: widget.product?.id ?? 'product-$now',
+        name: name.text.trim(),
+        costInPoints:
+            int.tryParse(cost.text) ?? widget.product?.costInPoints ?? 0,
+        iconSeed: widget.product?.iconSeed ?? now.remainder(100000),
+        requiresPhoneNumber: needsPhone,
+        isActive: active,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.product == null ? 'إضافة منتج' : 'تعديل المنتج'),
+        content: SizedBox(
+          width: 460,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: 'اسم المنتج')),
+            const SizedBox(height: 10),
+            TextField(
+                controller: cost,
+                keyboardType: TextInputType.number,
+                decoration:
+                    const InputDecoration(labelText: 'التكلفة بالنقاط')),
+            SwitchListTile(
+                value: needsPhone,
+                onChanged: (value) => setState(() => needsPhone = value),
+                title: const Text('يتطلب رقم هاتف')),
+            SwitchListTile(
+                value: active,
+                onChanged: (value) => setState(() => active = value),
+                title: const Text('المنتج نشط')),
+          ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          FilledButton(onPressed: _save, child: const Text('حفظ')),
+        ],
+      );
 }
 
 class MerchantAccountsAdmin extends StatelessWidget {
@@ -1776,10 +2077,17 @@ class _SettingsAdminState extends State<SettingsAdmin> {
   Future<void> _save() async {
     final value = int.tryParse(controller.text) ?? 0;
     if (value <= 0) return;
-    await widget.cubit.updatePointValue(value);
+    // Only report success when the backend update actually succeeded
+    // (AdminAppCubit.updatePointValue returns false on any failure).
+    final saved = await widget.cubit.updatePointValue(value);
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('تم حفظ قيمة النقطة.')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saved
+            ? 'تم حفظ قيمة النقطة.'
+            : 'تعذر حفظ قيمة النقطة. حاول مرة أخرى.'),
+      ),
+    );
   }
 }
 
@@ -1797,154 +2105,6 @@ Customer _customerForRequest(
     pointsBalance: 0,
     createdAt: request.createdAt,
   );
-}
-
-Future<PartnerStore?> _showStoreEditor(
-  BuildContext context, [
-  PartnerStore? partner,
-]) async {
-  final name = TextEditingController(text: partner?.name);
-  final category = TextEditingController(text: partner?.category);
-  final rate = TextEditingController(text: partner?.commissionRate.toString());
-  final location = TextEditingController(text: partner?.location);
-  final description = TextEditingController(text: partner?.description);
-  try {
-    return await showDialog<PartnerStore>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(partner == null ? 'إضافة محل' : 'تعديل المحل'),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: Column(children: [
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'اسم المحل')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: category,
-                  decoration: const InputDecoration(labelText: 'الفئة')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: rate,
-                  keyboardType: TextInputType.number,
-                  decoration:
-                      const InputDecoration(labelText: 'نسبة العمولة %')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: location,
-                  decoration: const InputDecoration(labelText: 'الموقع')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: description,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'الوصف')),
-            ]),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () {
-              final now = DateTime.now().microsecondsSinceEpoch;
-              Navigator.pop(
-                context,
-                PartnerStore(
-                  id: partner?.id ?? 'store-$now',
-                  name: name.text.trim(),
-                  category: category.text.trim(),
-                  commissionRate: double.tryParse(rate.text) ??
-                      partner?.commissionRate ??
-                      0,
-                  description: description.text.trim(),
-                  location: location.text.trim(),
-                  iconSeed: partner?.iconSeed ?? now.remainder(100000),
-                  isActive: partner?.isActive ?? true,
-                ),
-              );
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
-    );
-  } finally {
-    name.dispose();
-    category.dispose();
-    rate.dispose();
-    location.dispose();
-    description.dispose();
-  }
-}
-
-Future<DigitalProduct?> _showProductEditor(
-  BuildContext context, [
-  DigitalProduct? product,
-]) async {
-  final name = TextEditingController(text: product?.name);
-  final cost = TextEditingController(text: product?.costInPoints.toString());
-  var needsPhone = product?.requiresPhoneNumber ?? false;
-  var active = product?.isActive ?? true;
-  try {
-    return await showDialog<DigitalProduct>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocalState) => AlertDialog(
-          title: Text(product == null ? 'إضافة منتج' : 'تعديل المنتج'),
-          content: SizedBox(
-            width: 460,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'اسم المنتج')),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: cost,
-                  keyboardType: TextInputType.number,
-                  decoration:
-                      const InputDecoration(labelText: 'التكلفة بالنقاط')),
-              SwitchListTile(
-                  value: needsPhone,
-                  onChanged: (value) => setLocalState(() => needsPhone = value),
-                  title: const Text('يتطلب رقم هاتف')),
-              SwitchListTile(
-                  value: active,
-                  onChanged: (value) => setLocalState(() => active = value),
-                  title: const Text('المنتج نشط')),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء')),
-            FilledButton(
-              onPressed: () {
-                final now = DateTime.now().microsecondsSinceEpoch;
-                Navigator.pop(
-                  context,
-                  DigitalProduct(
-                    id: product?.id ?? 'product-$now',
-                    name: name.text.trim(),
-                    costInPoints:
-                        int.tryParse(cost.text) ?? product?.costInPoints ?? 0,
-                    iconSeed: product?.iconSeed ?? now.remainder(100000),
-                    requiresPhoneNumber: needsPhone,
-                    isActive: active,
-                  ),
-                );
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-  } finally {
-    name.dispose();
-    cost.dispose();
-  }
 }
 
 Future<IssuedMerchantAccount?> _showMerchantAccountEditor(

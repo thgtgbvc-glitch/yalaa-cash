@@ -77,6 +77,12 @@ class YallaCashApiClient {
 
   Future<Object?> delete(String path) => _send('DELETE', path);
 
+  /// In-flight refresh-token rotation. Guarantees exactly ONE active
+  /// `/auth/refresh` request per API client at any time: concurrent
+  /// requests that hit a 401 all await the SAME refresh Future instead of
+  /// racing each other with the same single-use refresh token.
+  Future<bool>? _refreshInFlight;
+
   Future<Object?> _send(
     String method,
     String path, {
@@ -105,6 +111,8 @@ class YallaCashApiClient {
       if (response.statusCode == 401 && authenticated && retryOnUnauthorized) {
         final refreshed = await _refreshToken();
         if (refreshed) {
+          // Re-read the latest tokens: the shared refresh attempt may have
+          // completed while this request was waiting on it.
           return await _send(
             method,
             path,
@@ -135,7 +143,21 @@ class YallaCashApiClient {
     }
   }
 
-  Future<bool> _refreshToken() async {
+  Future<bool> _refreshToken() {
+    final existing = _refreshInFlight;
+    if (existing != null) return existing;
+
+    final attempt = _performRefresh();
+    _refreshInFlight = attempt;
+    attempt.whenComplete(() {
+      if (identical(_refreshInFlight, attempt)) {
+        _refreshInFlight = null;
+      }
+    });
+    return attempt;
+  }
+
+  Future<bool> _performRefresh() async {
     final saved = await tokens;
     if (saved == null) return false;
     try {
@@ -145,10 +167,16 @@ class YallaCashApiClient {
         authenticated: false,
       );
       final json = apiMap(response);
-      final tokens = _tokensFromAuthResponse(json);
-      await saveTokens(tokens);
+      final newTokens = _tokensFromAuthResponse(json);
+      // Persist the rotated pair BEFORE returning so every waiter retries
+      // with the fresh access token.
+      await saveTokens(newTokens);
       return true;
-    } on YallaCashFailure {
+    } on Object {
+      // The refresh attempt failed (invalid/expired refresh token or an
+      // unusable response). Only THIS owner of the attempt clears the
+      // stored session, exactly once; concurrent waiters simply observe
+      // `false` and let their original 401 surface to the caller.
       await clearTokens();
       return false;
     }

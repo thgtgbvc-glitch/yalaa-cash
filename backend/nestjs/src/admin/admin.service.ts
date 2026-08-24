@@ -21,6 +21,7 @@ import {
   presentGovernorate,
   presentMerchantAccount,
   presentStore,
+  presentTransaction,
   toNumber,
 } from "../common/presenters";
 import { PrismaService } from "../prisma/prisma.service";
@@ -91,6 +92,16 @@ export class AdminService {
       orderBy: { createdAt: "desc" },
     });
     return { items: customers.map(presentCustomer) };
+  }
+
+  async listRecentTransactions(limit: number) {
+    const safeLimit = Math.min(Math.max(Math.trunc(limit) || 8, 1), 50);
+    const transactions = await this.prisma.loyaltyTransaction.findMany({
+      include: { store: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: safeLimit,
+    });
+    return { items: transactions.map(presentTransaction) };
   }
 
   async grantPoints(

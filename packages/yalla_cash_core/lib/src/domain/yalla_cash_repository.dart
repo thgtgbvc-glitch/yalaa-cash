@@ -211,6 +211,10 @@ abstract class YallaCashRepository {
 
   Future<AdminOverviewSnapshot> getAdminOverview();
   Future<List<Customer>> listAdminCustomers();
+
+  /// Latest loyalty transactions for the admin overview "recent activity"
+  /// table.
+  Future<List<LoyaltyTransaction>> listAdminRecentTransactions({int limit});
   Future<Customer> grantCustomerPoints({
     required String customerId,
     required int points,

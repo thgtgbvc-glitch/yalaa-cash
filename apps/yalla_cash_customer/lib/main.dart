@@ -5,19 +5,19 @@ import 'package:yalla_cash_customer/src/customer_app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  const configuredBaseUrl = String.fromEnvironment('YALLA_CASH_API_BASE_URL');
+  // Release builds must pin the SHARED backend explicitly via
+  // --dart-define=YALLA_CASH_API_BASE_URL=... Debug/local runs fall back to
+  // the platform-aware default from YallaCashEnvironment (localhost:3000,
+  // or 10.0.2.2:3000 inside an Android emulator).
+  const configuredBaseUrl =
+      String.fromEnvironment(YallaCashEnvironment.baseUrlEnvKey);
   if (kReleaseMode && configuredBaseUrl.isEmpty) {
     throw StateError(
       'YALLA_CASH_API_BASE_URL must be provided for release builds.',
     );
   }
-  final baseUrl =
-      configuredBaseUrl.isEmpty ? 'http://10.0.2.2:3000' : configuredBaseUrl;
   final runtime = YallaCashRuntime.fromEnvironment(
-    environment: YallaCashEnvironment(
-      apiBaseUrl: Uri.parse(baseUrl),
-      useRemoteBackend: true,
-    ),
+    environment: YallaCashEnvironment.fromEnvironment(useRemoteBackend: true),
   );
   runApp(YallaCashCustomerApp(runtime: runtime));
 }

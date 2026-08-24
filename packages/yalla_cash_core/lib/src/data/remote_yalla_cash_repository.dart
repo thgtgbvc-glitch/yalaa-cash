@@ -316,6 +316,16 @@ class RemoteYallaCashRepository implements YallaCashRepository {
           .toList(growable: false);
 
   @override
+  Future<List<LoyaltyTransaction>> listAdminRecentTransactions(
+          {int limit = 8}) async =>
+      apiItems(
+        await _client.get(
+          '/admin/transactions',
+          query: {'limit': limit},
+        ),
+      ).map(_transactionFromApi).toList(growable: false);
+
+  @override
   Future<List<Governorate>> listAdminGovernorates() async =>
       apiItems(await _client.get('/admin/governorates'))
           .map(_governorateFromApi)
@@ -574,9 +584,7 @@ class RemoteYallaCashRepository implements YallaCashRepository {
 
   Future<AuthSession> _authenticate(
       String path, Map<String, Object?> body) async {
-     print('LOGIN EMAIL: ${body['email']}');
-  print('LOGIN PASSWORD IS 123456: ${body['password'] == '123456'}');
-
+    // NOTE: never log credentials, tokens, or password-derived values here.
     final json =
         apiMap(await _client.post(path, body: body, authenticated: false));
     final tokens = authTokensFromResponse(json);

@@ -16,6 +16,7 @@ import { AdminService } from "./admin.service";
 import {
   AdjustCustomerPointsDto,
   AdminListCashRequestsDto,
+  AdminListTransactionsDto,
   CreateBannerDto,
   CreateDigitalProductDto,
   CreateGovernorateDto,
@@ -44,6 +45,11 @@ export class AdminController {
   @Get("customers")
   listCustomers() {
     return this.admin.listCustomers();
+  }
+
+  @Get("transactions")
+  listRecentTransactions(@Query() query: AdminListTransactionsDto) {
+    return this.admin.listRecentTransactions(query.limit ?? 8);
   }
 
   @Post("customers/:customerId/points/grant")
