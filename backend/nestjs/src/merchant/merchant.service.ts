@@ -202,7 +202,10 @@ export class MerchantService {
     const take = query.limit + 1;
     const transactions = await this.prisma.loyaltyTransaction.findMany({
       where: { storeId: account.storeId },
-      include: { store: { select: { name: true } } },
+      include: {
+        store: { select: { name: true } },
+        customer: { select: { name: true } },
+      },
       orderBy: { createdAt: "desc" },
       take,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),

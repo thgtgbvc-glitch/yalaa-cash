@@ -1,6 +1,9 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:yalla_cash_core/yalla_cash_core.dart' hide Banner;
 
@@ -26,6 +29,8 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
       : CustomerAppCubit(repository);
   ThemeMode themeMode = ThemeMode.light;
   bool restoringSession = false;
+  bool _pushSetupDone = false;
+  static final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
@@ -74,7 +79,14 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
         final state = snapshot.data ?? customerCubit.state;
         final restoring =
             restoringSession && state.customer == null && state.session == null;
+        if (widget.store == null &&
+            state.customer != null &&
+            !_pushSetupDone) {
+          _pushSetupDone = true;
+          unawaited(_setupPushNotifications());
+        }
         return MaterialApp(
+          scaffoldMessengerKey: _messengerKey,
           debugShowCheckedModeBanner: false,
           title: 'يلا كاش',
           theme: buildYallaTheme(Brightness.light),
@@ -111,6 +123,38 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
   void _loginDemoCustomer() {
     widget.store?.loginDemoCustomer();
     unawaited(customerCubit.refresh());
+  }
+
+  /// Registers this device's FCM token and wires up notification handling.
+  /// Best-effort: notifications are a non-critical enhancement, so any
+  /// failure here (missing permission, no Firebase config, etc.) is
+  /// swallowed rather than surfaced to the user.
+  Future<void> _setupPushNotifications() async {
+    try {
+      await FirebaseMessaging.instance.requestPermission();
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await customerCubit.registerDeviceToken(token);
+      }
+      FirebaseMessaging.instance.onTokenRefresh.listen(
+        (newToken) => unawaited(customerCubit.registerDeviceToken(newToken)),
+      );
+      FirebaseMessaging.onMessage.listen(_showForegroundNotification);
+    } on Object {
+      // Push notifications are optional; the rest of the app must keep working.
+    }
+  }
+
+  void _showForegroundNotification(RemoteMessage message) {
+    final title = message.notification?.title;
+    final body = message.notification?.body;
+    final text = [
+      if (title != null && title.isNotEmpty) title,
+      if (body != null && body.isNotEmpty) body,
+    ].join(' — ');
+    if (text.isEmpty) return;
+    _messengerKey.currentState
+        ?.showSnackBar(SnackBar(content: Text(text)));
   }
 }
 
@@ -158,6 +202,7 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
   final otpController = TextEditingController();
   String? governorate;
   PhoneOtpChallenge? otpChallenge;
+  String? _pendingOAuthIdToken;
   String? errorMessage;
   bool isLoading = false;
   Timer? resendTimer;
@@ -276,8 +321,7 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
                       child: _AuthChoice(
                         icon: Icons.mail_outline_rounded,
                         label: 'المتابعة عبر جيميل',
-                        onTap: () => _showUnavailable(
-                            'تسجيل الدخول عبر جوجل غير مفعّل بعد. يلزم إعداد Firebase وOAuth.'),
+                        onTap: () => unawaited(_signInWithGoogle()),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -424,21 +468,65 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
     );
   }
 
-  bool get _canSubmit =>
-      nameController.text.trim().isNotEmpty &&
-      governorate != null &&
-      phoneController.text.trim().length >= 8 &&
-      otpChallenge != null &&
-      otpController.text.trim().isNotEmpty;
+  bool get _canSubmit {
+    final hasProfile =
+        nameController.text.trim().isNotEmpty && governorate != null;
+    if (method == AuthMethod.phone) {
+      return hasProfile &&
+          phoneController.text.trim().length >= 8 &&
+          otpChallenge != null &&
+          otpController.text.trim().isNotEmpty;
+    }
+    return hasProfile && _pendingOAuthIdToken != null;
+  }
 
   bool get _canContinuePhone => phoneController.text.trim().length >= 8;
 
-  String get _otpHelpMessage {
-    final devCode = otpChallenge?.devCode;
-    if (devCode != null && devCode.isNotEmpty) {
-      return 'رمز الاختبار: $devCode';
+  String get _otpHelpMessage => 'أدخل رمز التحقق المرسل إلى هاتفك.';
+
+  Future<void> _signInWithGoogle() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+    try {
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        // User cancelled the account picker — not an error.
+        if (mounted) setState(() => isLoading = false);
+        return;
+      }
+      final googleAuth = await googleUser.authentication;
+      final credential = fb_auth.GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      final userCredential =
+          await fb_auth.FirebaseAuth.instance.signInWithCredential(credential);
+      final idToken = await userCredential.user?.getIdToken();
+      if (idToken == null || idToken.isEmpty) {
+        throw fb_auth.FirebaseAuthException(
+          code: 'missing-id-token',
+          message: 'Firebase did not return an ID token.',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        method = AuthMethod.gmail;
+        _pendingOAuthIdToken = idToken;
+        if (nameController.text.trim().isEmpty &&
+            (googleUser.displayName?.isNotEmpty ?? false)) {
+          nameController.text = googleUser.displayName!;
+        }
+        stage = _AuthStage.details;
+        isLoading = false;
+        errorMessage = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => isLoading = false);
+      _showUnavailable('تعذر تسجيل الدخول عبر جوجل. حاول مرة أخرى.');
     }
-    return 'أدخل رمز التحقق المرسل إلى هاتفك.';
   }
 
   Future<void> _continueToOtp() async {
@@ -464,9 +552,6 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
     }
     setState(() {
       otpChallenge = challenge;
-      if (challenge.devCode?.isNotEmpty ?? false) {
-        otpController.text = challenge.devCode!;
-      }
       stage = _AuthStage.otp;
       isLoading = false;
       errorMessage = null;
@@ -513,9 +598,6 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
     setState(() {
       isLoading = false;
       otpChallenge = challenge;
-      if (challenge.devCode?.isNotEmpty ?? false) {
-        otpController.text = challenge.devCode!;
-      }
     });
     resendTimer?.cancel();
     resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -537,6 +619,7 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
         stage = _AuthStage.options;
         method = null;
         otpChallenge = null;
+        _pendingOAuthIdToken = null;
         isLoading = false;
         errorMessage = null;
       });
@@ -549,22 +632,40 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
       });
 
   Future<void> _submit() async {
-    final challenge = otpChallenge;
-    if (method == AuthMethod.phone && challenge == null) {
-      setState(() => errorMessage = 'ابدأ التحقق من رقم الهاتف مرة أخرى.');
-      return;
+    if (method == AuthMethod.phone) {
+      final challenge = otpChallenge;
+      if (challenge == null) {
+        setState(() => errorMessage = 'ابدأ التحقق من رقم الهاتف مرة أخرى.');
+        return;
+      }
+      setState(() {
+        isLoading = true;
+        errorMessage = null;
+      });
+      await widget.cubit.verifyPhoneOtp(
+        challengeId: challenge.challengeId,
+        phone: phoneController.text.trim(),
+        code: otpController.text.trim(),
+        name: nameController.text.trim(),
+        governorate: governorate!,
+      );
+    } else {
+      final idToken = _pendingOAuthIdToken;
+      if (idToken == null) {
+        setState(() => errorMessage = 'ابدأ تسجيل الدخول مرة أخرى.');
+        return;
+      }
+      setState(() {
+        isLoading = true;
+        errorMessage = null;
+      });
+      await widget.cubit.signInWithOAuth(
+        provider: method!,
+        firebaseIdToken: idToken,
+        name: nameController.text.trim(),
+        governorate: governorate!,
+      );
     }
-    setState(() {
-      isLoading = true;
-      errorMessage = null;
-    });
-    await widget.cubit.verifyPhoneOtp(
-      challengeId: challenge?.challengeId ?? '',
-      phone: phoneController.text.trim(),
-      code: otpController.text.trim(),
-      name: nameController.text.trim(),
-      governorate: governorate!,
-    );
     if (!mounted) return;
     if (widget.cubit.state.customer == null) {
       setState(() {
@@ -1242,27 +1343,12 @@ class _StoreCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final icons = [
-      Icons.restaurant_rounded,
-      Icons.shopping_cart_rounded,
-      Icons.coffee_rounded,
-      Icons.content_cut_rounded,
-      Icons.medication_rounded
-    ];
-    final colors = [
-      YallaColors.primaryStrong,
-      const Color(0xFF0E8C79),
-      const Color(0xFF8A5A26),
-      const Color(0xFFC7447A),
-      const Color(0xFF4C3FBF)
-    ];
-    final index = store.iconSeed % icons.length;
     return Card(
       child: ExpansionTile(
-        leading: CircleAvatar(
-          backgroundColor: colors[index],
+        leading: const CircleAvatar(
+          backgroundColor: YallaColors.primaryStrong,
           foregroundColor: Colors.white,
-          child: Icon(icons[index], size: 20),
+          child: Icon(Icons.storefront_rounded, size: 20),
         ),
         title: Text(store.name,
             style: const TextStyle(fontWeight: FontWeight.w800)),

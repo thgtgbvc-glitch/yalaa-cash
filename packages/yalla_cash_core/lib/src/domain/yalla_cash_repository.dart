@@ -173,6 +173,8 @@ abstract class YallaCashRepository {
 
   Future<void> logout();
 
+  Future<void> registerDeviceToken(String token);
+
   Future<Customer> getCustomerProfile();
   Future<Customer> updateCustomerProfile({
     required String name,
@@ -237,6 +239,16 @@ abstract class YallaCashRepository {
   Future<CashRedemptionRequest> resolveCashRequest({
     required String requestId,
     required bool approve,
+  });
+  Future<List<ProductRedemption>> listAdminProductRedemptions(
+      {String? status});
+  Future<ProductRedemption> resolveProductRedemption({
+    required String redemptionId,
+    required bool approve,
+  });
+  Future<void> sendGeneralNotification({
+    required String title,
+    required String body,
   });
   Future<List<PartnerStore>> listAdminStores();
   Future<PartnerStore> createStore(PartnerStore store);

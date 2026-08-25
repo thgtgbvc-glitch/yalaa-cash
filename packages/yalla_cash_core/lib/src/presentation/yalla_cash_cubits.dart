@@ -217,6 +217,16 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
     });
   }
 
+  /// Best-effort: a failed device-token registration must never disrupt the
+  /// rest of the app, so failures are swallowed rather than surfaced.
+  Future<void> registerDeviceToken(String token) async {
+    try {
+      await _repository.registerDeviceToken(token);
+    } on Object {
+      // Push notifications are a non-critical enhancement.
+    }
+  }
+
   Future<void> updateGovernorate(String governorateId) async {
     await _run(() async {
       final customer =
@@ -490,6 +500,7 @@ class AdminAppState extends Equatable {
     this.stores = const [],
     this.products = const [],
     this.cashRequests = const [],
+    this.productRedemptions = const [],
     this.merchantAccounts = const [],
     this.settlements = const [],
     this.recentTransactions = const [],
@@ -504,6 +515,7 @@ class AdminAppState extends Equatable {
   final List<PartnerStore> stores;
   final List<DigitalProduct> products;
   final List<CashRedemptionRequest> cashRequests;
+  final List<ProductRedemption> productRedemptions;
   final List<MerchantAccount> merchantAccounts;
   final List<MerchantSettlementSummary> settlements;
 
@@ -523,6 +535,7 @@ class AdminAppState extends Equatable {
     List<PartnerStore>? stores,
     List<DigitalProduct>? products,
     List<CashRedemptionRequest>? cashRequests,
+    List<ProductRedemption>? productRedemptions,
     List<MerchantAccount>? merchantAccounts,
     List<MerchantSettlementSummary>? settlements,
     List<LoyaltyTransaction>? recentTransactions,
@@ -540,6 +553,7 @@ class AdminAppState extends Equatable {
         stores: stores ?? this.stores,
         products: products ?? this.products,
         cashRequests: cashRequests ?? this.cashRequests,
+        productRedemptions: productRedemptions ?? this.productRedemptions,
         merchantAccounts: merchantAccounts ?? this.merchantAccounts,
         settlements: settlements ?? this.settlements,
         recentTransactions: recentTransactions ?? this.recentTransactions,
@@ -560,6 +574,7 @@ class AdminAppState extends Equatable {
         stores,
         products,
         cashRequests,
+        productRedemptions,
         merchantAccounts,
         settlements,
         recentTransactions,
@@ -605,6 +620,7 @@ class AdminAppCubit extends Cubit<AdminAppState> {
         _repository.listAdminStores(),
         _repository.listAdminProducts(),
         _repository.listAdminCashRequests(status: 'pending'),
+        _repository.listAdminProductRedemptions(status: 'pending'),
         _repository.listMerchantAccounts(),
         _repository.listSettlements(),
         _repository.getPointValue(),
@@ -623,10 +639,11 @@ class AdminAppCubit extends Cubit<AdminAppState> {
           stores: results[2] as List<PartnerStore>,
           products: results[3] as List<DigitalProduct>,
           cashRequests: results[4] as List<CashRedemptionRequest>,
-          merchantAccounts: results[5] as List<MerchantAccount>,
-          settlements: results[6] as List<MerchantSettlementSummary>,
-          pointValueSyp: results[7] as int,
-          recentTransactions: results[8] as List<LoyaltyTransaction>,
+          productRedemptions: results[5] as List<ProductRedemption>,
+          merchantAccounts: results[6] as List<MerchantAccount>,
+          settlements: results[7] as List<MerchantSettlementSummary>,
+          pointValueSyp: results[8] as int,
+          recentTransactions: results[9] as List<LoyaltyTransaction>,
           failure: null,
         ),
       );
@@ -682,6 +699,22 @@ class AdminAppCubit extends Cubit<AdminAppState> {
         await _repository.resolveCashRequest(
             requestId: request.id, approve: approve);
         await refresh();
+      });
+
+  Future<bool> resolveProductRedemption(
+          ProductRedemption redemption, bool approve) =>
+      _run(() async {
+        await _repository.resolveProductRedemption(
+            redemptionId: redemption.id, approve: approve);
+        await refresh();
+      });
+
+  Future<bool> sendGeneralNotification({
+    required String title,
+    required String body,
+  }) =>
+      _run(() async {
+        await _repository.sendGeneralNotification(title: title, body: body);
       });
 
   Future<bool> createStore(PartnerStore store) => _run(() async {

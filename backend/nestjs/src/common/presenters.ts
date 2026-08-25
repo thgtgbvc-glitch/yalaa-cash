@@ -24,6 +24,12 @@ type CustomerWithUser = {
 
 type TransactionWithStore = LoyaltyTransaction & {
   store?: Pick<Store, "name"> | null;
+  customer?: { name: string } | null;
+};
+
+type ProductRedemptionWithDetails = ProductRedemption & {
+  customer?: { name: string; user?: Pick<User, "phone"> | null } | null;
+  product?: Pick<DigitalProduct, "name"> | null;
 };
 
 type CashRequestWithCustomer = {
@@ -116,6 +122,7 @@ export function presentTransaction(transaction: TransactionWithStore) {
     storeId: transaction.storeId,
     storeName: transaction.store?.name ?? "",
     customerId: transaction.customerId,
+    customerName: transaction.customer?.name ?? "",
     amountSyp: toNumber(transaction.amountSyp),
     commissionRateSnapshot: Number(transaction.commissionRateSnapshot),
     commissionAmountSyp: toNumber(transaction.commissionAmountSyp),
@@ -153,11 +160,16 @@ export function presentCashRequest(request: CashRequestWithCustomer) {
   };
 }
 
-export function presentProductRedemption(redemption: ProductRedemption) {
+export function presentProductRedemption(
+  redemption: ProductRedemptionWithDetails,
+) {
   return {
     id: redemption.id,
     customerId: redemption.customerId,
+    customerName: redemption.customer?.name,
+    customerPhone: redemption.customer?.user?.phone,
     productId: redemption.productId,
+    productName: redemption.product?.name,
     pointsCostSnapshot: toNumber(redemption.pointsCostSnapshot),
     phoneNumber: redemption.phoneNumber,
     status: redemption.status.toLowerCase(),

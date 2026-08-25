@@ -44,28 +44,9 @@ export class FirebaseOAuthService implements OnModuleInit {
     }
   }
 
-  async verifyCustomerToken(
-    provider: Extract<AuthMethod, "GOOGLE" | "FACEBOOK">,
-    idToken: string,
-  ): Promise<VerifiedOAuthIdentity> {
-    const app = this.getApp();
-    const token = await getAuth(app).verifyIdToken(idToken, true);
-    const signInProvider = token.firebase?.sign_in_provider;
-    const expected =
-      provider === AuthMethod.GOOGLE ? "google.com" : "facebook.com";
-
-    if (signInProvider !== expected) {
-      throw new UnauthorizedException("OAuth provider does not match token.");
-    }
-
-    return {
-      subject: token.uid,
-      email: token.email,
-      phone: token.phone_number,
-    };
-  }
-
-  private getApp(): App {
+  /** Shared Firebase Admin app instance — reused by FcmService so push
+   * notifications don't initialize a second Firebase Admin app. */
+  getApp(): App {
     if (this.app) return this.app;
     if (getApps().length > 0) {
       this.app = getApps()[0];
@@ -88,5 +69,26 @@ export class FirebaseOAuthService implements OnModuleInit {
       credential: cert({ projectId, clientEmail, privateKey }),
     });
     return this.app;
+  }
+
+  async verifyCustomerToken(
+    provider: Extract<AuthMethod, "GOOGLE" | "FACEBOOK">,
+    idToken: string,
+  ): Promise<VerifiedOAuthIdentity> {
+    const app = this.getApp();
+    const token = await getAuth(app).verifyIdToken(idToken, true);
+    const signInProvider = token.firebase?.sign_in_provider;
+    const expected =
+      provider === AuthMethod.GOOGLE ? "google.com" : "facebook.com";
+
+    if (signInProvider !== expected) {
+      throw new UnauthorizedException("OAuth provider does not match token.");
+    }
+
+    return {
+      subject: token.uid,
+      email: token.email,
+      phone: token.phone_number,
+    };
   }
 }

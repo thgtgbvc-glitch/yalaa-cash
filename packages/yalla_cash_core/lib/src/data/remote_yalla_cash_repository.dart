@@ -165,6 +165,11 @@ class RemoteYallaCashRepository implements YallaCashRepository {
   }
 
   @override
+  Future<void> registerDeviceToken(String token) async {
+    await _client.post('/customer/device-token', body: {'token': token});
+  }
+
+  @override
   Future<List<PartnerStore>> listActiveStores(
           {String? city, String? category}) async =>
       apiItems(
@@ -473,6 +478,37 @@ class RemoteYallaCashRepository implements YallaCashRepository {
       );
 
   @override
+  Future<List<ProductRedemption>> listAdminProductRedemptions(
+          {String? status}) async =>
+      apiItems(
+        await _client
+            .get('/admin/product-redemptions', query: {'status': status}),
+      ).map(_productRedemptionFromApi).toList(growable: false);
+
+  @override
+  Future<ProductRedemption> resolveProductRedemption({
+    required String redemptionId,
+    required bool approve,
+  }) async =>
+      _productRedemptionFromApi(
+        apiMap(
+          await _client.post(
+            '/admin/product-redemptions/$redemptionId/resolve',
+            body: {'approve': approve},
+          ),
+        ),
+      );
+
+  @override
+  Future<void> sendGeneralNotification({
+    required String title,
+    required String body,
+  }) async {
+    await _client
+        .post('/admin/notifications', body: {'title': title, 'body': body});
+  }
+
+  @override
   Future<List<PartnerStore>> listAdminStores() async =>
       apiItems(await _client.get('/admin/stores'))
           .map(_storeFromApi)
@@ -659,6 +695,7 @@ class RemoteYallaCashRepository implements YallaCashRepository {
         storeId: json['storeId']! as String,
         storeName: (json['storeName'] as String?) ?? '',
         customerId: json['customerId']! as String,
+        customerName: json['customerName'] as String?,
         amountSyp: _int(json['amountSyp']),
         commissionRateSnapshot: _double(json['commissionRateSnapshot']),
         commissionAmountSyp: _int(json['commissionAmountSyp']),
@@ -689,6 +726,35 @@ class RemoteYallaCashRepository implements YallaCashRepository {
             ? null
             : DateTime.parse(json['settledAt']! as String),
       );
+
+  ProductRedemption _productRedemptionFromApi(Map<String, Object?> json) =>
+      ProductRedemption(
+        id: json['id']! as String,
+        customerId: json['customerId']! as String,
+        customerName: json['customerName'] as String?,
+        customerPhone: json['customerPhone'] as String?,
+        productId: json['productId']! as String,
+        productName: json['productName'] as String?,
+        pointsCostSnapshot: _int(json['pointsCostSnapshot']),
+        phoneNumber: json['phoneNumber'] as String?,
+        status: _redemptionStatusFromApi(json['status']! as String),
+        createdAt: DateTime.parse(json['createdAt']! as String),
+        fulfilledAt: json['fulfilledAt'] == null
+            ? null
+            : DateTime.parse(json['fulfilledAt']! as String),
+      );
+
+  RedemptionStatus _redemptionStatusFromApi(String value) {
+    switch (value.toLowerCase()) {
+      case 'fulfilled':
+        return RedemptionStatus.fulfilled;
+      case 'rejected':
+        return RedemptionStatus.rejected;
+      case 'pending':
+      default:
+        return RedemptionStatus.pending;
+    }
+  }
 
   MerchantAccount _merchantAccountFromApi(Map<String, Object?> json) =>
       MerchantAccount(

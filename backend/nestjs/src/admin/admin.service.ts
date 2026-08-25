@@ -8,6 +8,7 @@ import {
   CashRequestStatus,
   PointsEntryType,
   Prisma,
+  RedemptionStatus,
   SettlementStatus,
   UserRole,
 } from "@prisma/client";
@@ -20,19 +21,24 @@ import {
   presentDigitalProduct,
   presentGovernorate,
   presentMerchantAccount,
+  presentProductRedemption,
   presentStore,
   presentTransaction,
   toNumber,
 } from "../common/presenters";
+import { FcmService } from "../notifications/fcm.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   AdjustCustomerPointsDto,
   AdminListCashRequestsDto,
+  AdminListProductRedemptionsDto,
   CreateBannerDto,
   CreateDigitalProductDto,
   CreateGovernorateDto,
   CreateMerchantAccountDto,
   CreateStoreDto,
+  ResolveProductRedemptionDto,
+  SendNotificationDto,
   SettleStoreDto,
   SettlementQueryDto,
   UpdateBannerDto,
@@ -47,6 +53,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
+    private readonly fcm: FcmService,
   ) {}
 
   async overview() {
@@ -214,7 +221,126 @@ export class AdminService {
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
 
+    if (approve) {
+      void this.fcm
+        .sendToUser(updated.customerId, {
+          title: "تمت العملية",
+          body: "تم تحويل مبلغ استبدال النقاط بنجاح.",
+        })
+        .catch(() => undefined);
+    }
+
     return presentCashRequest(updated);
+  }
+
+  async listProductRedemptions(query: AdminListProductRedemptionsDto) {
+    const status = query.status?.toUpperCase() as
+      | RedemptionStatus
+      | undefined;
+    const items = await this.prisma.productRedemption.findMany({
+      where: status ? { status } : undefined,
+      include: {
+        customer: { select: { name: true, user: { select: { phone: true } } } },
+        product: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return { items: items.map(presentProductRedemption) };
+  }
+
+  /**
+   * Deducts points exactly once, only here, only on approve — mirrors
+   * resolveCashRequest: the status is re-checked inside a Serializable
+   * transaction, so a request that already left PENDING (settled or
+   * rejected by an earlier call) is rejected as NotFound rather than
+   * processed a second time.
+   */
+  async resolveProductRedemption(
+    redemptionId: string,
+    dto: ResolveProductRedemptionDto,
+  ) {
+    const updated = await this.prisma.$transaction(
+      async (tx) => {
+        const redemption = await tx.productRedemption.findUnique({
+          where: { id: redemptionId },
+        });
+        if (!redemption || redemption.status !== RedemptionStatus.PENDING) {
+          throw new NotFoundException(
+            "Pending product redemption was not found.",
+          );
+        }
+
+        if (!dto.approve) {
+          const customer = await tx.customerProfile.findUniqueOrThrow({
+            where: { userId: redemption.customerId },
+            select: { pointsBalance: true },
+          });
+          const rejected = await tx.productRedemption.update({
+            where: { id: redemption.id },
+            data: { status: RedemptionStatus.REJECTED },
+          });
+          await tx.pointsLedgerEntry.create({
+            data: {
+              customerId: redemption.customerId,
+              entryType: PointsEntryType.PRODUCT_RELEASE,
+              pointsDelta: 0,
+              balanceAfter: customer.pointsBalance,
+              referenceId: redemption.id,
+              note: "Digital product redemption rejected.",
+            },
+          });
+          return rejected;
+        }
+
+        const customer = await tx.customerProfile.findUnique({
+          where: { userId: redemption.customerId },
+          select: { pointsBalance: true },
+        });
+        if (!customer) throw new NotFoundException("Customer was not found.");
+        if (customer.pointsBalance < redemption.pointsCostSnapshot) {
+          throw new BadRequestException(
+            "Customer does not have enough points.",
+          );
+        }
+
+        const savedCustomer = await tx.customerProfile.update({
+          where: { userId: redemption.customerId },
+          data: { pointsBalance: { decrement: redemption.pointsCostSnapshot } },
+          select: { pointsBalance: true },
+        });
+        const fulfilled = await tx.productRedemption.update({
+          where: { id: redemption.id },
+          data: { status: RedemptionStatus.FULFILLED, fulfilledAt: new Date() },
+        });
+        await tx.pointsLedgerEntry.create({
+          data: {
+            customerId: redemption.customerId,
+            entryType: PointsEntryType.PRODUCT_REDEEM,
+            pointsDelta: -redemption.pointsCostSnapshot,
+            balanceAfter: savedCustomer.pointsBalance,
+            referenceId: redemption.id,
+            note: "Digital product redemption fulfilled.",
+          },
+        });
+        return fulfilled;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if (dto.approve) {
+      void this.fcm
+        .sendToUser(updated.customerId, {
+          title: "تمت العملية",
+          body: "تم تسليم طلب استبدال المنتج الرقمي بنجاح.",
+        })
+        .catch(() => undefined);
+    }
+
+    return presentProductRedemption(updated);
+  }
+
+  async sendGeneralNotification(dto: SendNotificationDto) {
+    return this.fcm.sendToAllCustomers({ title: dto.title, body: dto.body });
   }
 
   async listStores() {

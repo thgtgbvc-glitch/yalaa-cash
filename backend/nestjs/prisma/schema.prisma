@@ -41,6 +41,8 @@ enum PointsEntryType {
   CASH_RESERVE
   CASH_RELEASE
   CASH_SETTLE
+  PRODUCT_RESERVE
+  PRODUCT_RELEASE
   PRODUCT_REDEEM
   ADMIN_GRANT
   ADMIN_DEDUCT
@@ -74,9 +76,21 @@ model User {
   adminProfile    AdminProfile?
   otpChallenges   OtpChallenge[]
   refreshTokens   RefreshToken[]
+  deviceTokens    DeviceToken[]
 
   @@unique([oauthProvider, oauthSubject])
   @@index([role])
+}
+
+model DeviceToken {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model CustomerProfile {

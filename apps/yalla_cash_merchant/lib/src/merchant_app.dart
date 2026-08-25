@@ -348,15 +348,6 @@ class _MerchantWorkspaceState extends State<MerchantWorkspace> {
           },
         ),
       ),
-      floatingActionButton: view == MerchantView.dashboard
-          ? FloatingActionButton.extended(
-              onPressed: isLoading
-                  ? null
-                  : () => setState(() => view = MerchantView.scan),
-              icon: const Icon(Icons.qr_code_scanner_rounded),
-              label: const Text('مسح كود'),
-            )
-          : null,
     );
   }
 
@@ -515,13 +506,12 @@ class MerchantDashboard extends StatelessWidget {
               (transaction) => Card(
                 margin: const EdgeInsets.only(bottom: 10),
                 child: ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.check_rounded)),
                   title: Text(
                     '${formatNumber(transaction.amountSyp)} ل.س',
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                   subtitle: Text(
-                      '${formatDate(transaction.createdAt)} · ${transaction.customerId}'),
+                      '${formatDate(transaction.createdAt)} · ${transaction.customerName?.isNotEmpty ?? false ? transaction.customerName! : transaction.customerId}'),
                   trailing: Text(
                     '${formatNumber(transaction.commissionAmountSyp)} ل.س',
                     style: TextStyle(

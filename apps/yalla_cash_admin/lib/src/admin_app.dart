@@ -211,6 +211,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 enum AdminSection {
   overview('نظرة عامة', Icons.dashboard_outlined),
   cashRequests('طلبات الكاش', Icons.payments_outlined),
+  productRedemptions('طلبات استبدال المنتجات', Icons.card_giftcard_outlined),
   customers('المستخدمون', Icons.people_outline_rounded),
   stores('المحلات', Icons.storefront_outlined),
   governorates('المحافظات', Icons.location_on_outlined),
@@ -218,6 +219,7 @@ enum AdminSection {
   products('المنتجات الرقمية', Icons.redeem_outlined),
   merchantAccounts('حسابات المحلات', Icons.badge_outlined),
   settlements('التحاسب الشهري', Icons.account_balance_outlined),
+  notifications('الإشعارات', Icons.notifications_outlined),
   settings('الإعدادات', Icons.settings_outlined);
 
   const AdminSection(this.label, this.icon);
@@ -379,6 +381,10 @@ class _AdminContent extends StatelessWidget {
             requests: state.cashRequests,
             customers: state.customers,
           ),
+        AdminSection.productRedemptions => ProductRedemptionsAdmin(
+            cubit: cubit,
+            redemptions: state.productRedemptions,
+          ),
         AdminSection.customers => CustomersAdmin(
             cubit: cubit,
             customers: state.customers,
@@ -402,6 +408,7 @@ class _AdminContent extends StatelessWidget {
             cubit: cubit,
             settlements: state.settlements,
           ),
+        AdminSection.notifications => NotificationsAdmin(cubit: cubit),
         AdminSection.settings => SettingsAdmin(
             cubit: cubit,
             pointValueSyp: state.pointValueSyp,
@@ -510,7 +517,7 @@ class AdminOverview extends StatelessWidget {
   }
 }
 
-class CashRequestsAdmin extends StatelessWidget {
+class CashRequestsAdmin extends StatefulWidget {
   const CashRequestsAdmin({
     required this.cubit,
     required this.requests,
@@ -523,19 +530,36 @@ class CashRequestsAdmin extends StatelessWidget {
   final List<Customer> customers;
 
   @override
+  State<CashRequestsAdmin> createState() => _CashRequestsAdminState();
+}
+
+class _CashRequestsAdminState extends State<CashRequestsAdmin> {
+  final Set<String> _resolvingIds = {};
+
+  Future<void> _resolve(CashRedemptionRequest request, bool approve) async {
+    setState(() => _resolvingIds.add(request.id));
+    try {
+      await widget.cubit.resolveCashRequest(request, approve);
+    } finally {
+      if (mounted) setState(() => _resolvingIds.remove(request.id));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return _AdminPage(children: [
       const _PageTitle(
           title: 'طلبات استبدال النقاط بكاش',
           subtitle: 'راجع الطلب ثم أكد التسليم النقدي أو ارفضه'),
       const SizedBox(height: 18),
-      if (requests.isEmpty)
+      if (widget.requests.isEmpty)
         const _EmptyAdmin(
             icon: Icons.check_circle_outline_rounded,
             text: 'لا توجد طلبات معلقة')
       else
-        ...requests.map((request) {
-          final customer = _customerForRequest(request, customers);
+        ...widget.requests.map((request) {
+          final customer = _customerForRequest(request, widget.customers);
+          final resolving = _resolvingIds.contains(request.id);
           return Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: Padding(
@@ -560,15 +584,22 @@ class CashRequestsAdmin extends StatelessWidget {
                   SizedBox(
                     width: 140,
                     child: FilledButton.tonalIcon(
-                      onPressed: () => cubit.resolveCashRequest(request, true),
-                      icon: const Icon(Icons.check_rounded),
+                      onPressed:
+                          resolving ? null : () => _resolve(request, true),
+                      icon: resolving
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.check_rounded),
                       label: const Text('حل الطلب'),
                     ),
                   ),
                   SizedBox(
                     width: 140,
                     child: OutlinedButton.icon(
-                      onPressed: () => cubit.resolveCashRequest(request, false),
+                      onPressed:
+                          resolving ? null : () => _resolve(request, false),
                       icon: const Icon(Icons.close_rounded),
                       label: const Text('رفض الطلب'),
                     ),
@@ -578,6 +609,210 @@ class CashRequestsAdmin extends StatelessWidget {
             ),
           );
         }),
+    ]);
+  }
+}
+
+class ProductRedemptionsAdmin extends StatefulWidget {
+  const ProductRedemptionsAdmin({
+    required this.cubit,
+    required this.redemptions,
+    super.key,
+  });
+
+  final AdminAppCubit cubit;
+  final List<ProductRedemption> redemptions;
+
+  @override
+  State<ProductRedemptionsAdmin> createState() =>
+      _ProductRedemptionsAdminState();
+}
+
+class _ProductRedemptionsAdminState extends State<ProductRedemptionsAdmin> {
+  final Set<String> _resolvingIds = {};
+
+  Future<void> _resolve(ProductRedemption redemption, bool approve) async {
+    setState(() => _resolvingIds.add(redemption.id));
+    try {
+      await widget.cubit.resolveProductRedemption(redemption, approve);
+    } finally {
+      if (mounted) setState(() => _resolvingIds.remove(redemption.id));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _AdminPage(children: [
+      const _PageTitle(
+          title: 'طلبات استبدال المنتجات الرقمية',
+          subtitle: 'راجع الطلب ثم أكد التسليم أو ارفضه'),
+      const SizedBox(height: 18),
+      if (widget.redemptions.isEmpty)
+        const _EmptyAdmin(
+            icon: Icons.check_circle_outline_rounded,
+            text: 'لا توجد طلبات معلقة')
+      else
+        ...widget.redemptions.map((redemption) {
+          final resolving = _resolvingIds.contains(redemption.id);
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Wrap(
+                spacing: 14,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const CircleAvatar(child: Icon(Icons.card_giftcard_outlined)),
+                  SizedBox(
+                      width: 240,
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(redemption.customerName ?? redemption.customerId,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w900)),
+                            if ((redemption.customerPhone ?? '').isNotEmpty)
+                              Text(redemption.customerPhone!,
+                                  textDirection: TextDirection.ltr),
+                            Text(
+                                '${redemption.productName ?? redemption.productId} · ${formatNumber(redemption.pointsCostSnapshot)} نقطة'),
+                            if ((redemption.phoneNumber ?? '').isNotEmpty)
+                              Text('رقم الاستلام: ${redemption.phoneNumber}',
+                                  textDirection: TextDirection.ltr),
+                            Text(
+                                '${_redemptionStatusLabel(redemption.status)} · ${formatDate(redemption.createdAt)}'),
+                          ])),
+                  SizedBox(
+                    width: 140,
+                    child: FilledButton.tonalIcon(
+                      onPressed:
+                          resolving ? null : () => _resolve(redemption, true),
+                      icon: resolving
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.check_rounded),
+                      label: const Text('حل الطلب'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 140,
+                    child: OutlinedButton.icon(
+                      onPressed: resolving
+                          ? null
+                          : () => _resolve(redemption, false),
+                      icon: const Icon(Icons.close_rounded),
+                      label: const Text('رفض الطلب'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+    ]);
+  }
+}
+
+String _redemptionStatusLabel(RedemptionStatus status) => switch (status) {
+      RedemptionStatus.pending => 'قيد المعالجة',
+      RedemptionStatus.fulfilled => 'تم التسليم',
+      RedemptionStatus.rejected => 'مرفوض',
+    };
+
+class NotificationsAdmin extends StatefulWidget {
+  const NotificationsAdmin({required this.cubit, super.key});
+
+  final AdminAppCubit cubit;
+
+  @override
+  State<NotificationsAdmin> createState() => _NotificationsAdminState();
+}
+
+class _NotificationsAdminState extends State<NotificationsAdmin> {
+  final titleController = TextEditingController();
+  final bodyController = TextEditingController();
+  bool sending = false;
+  String? resultMessage;
+
+  @override
+  void dispose() {
+    titleController.dispose();
+    bodyController.dispose();
+    super.dispose();
+  }
+
+  bool get _canSend =>
+      titleController.text.trim().isNotEmpty &&
+      bodyController.text.trim().isNotEmpty &&
+      !sending;
+
+  Future<void> _send() async {
+    setState(() {
+      sending = true;
+      resultMessage = null;
+    });
+    final success = await widget.cubit.sendGeneralNotification(
+      title: titleController.text.trim(),
+      body: bodyController.text.trim(),
+    );
+    if (!mounted) return;
+    setState(() {
+      sending = false;
+      resultMessage = success ? 'تم إرسال الإشعار إلى جميع الزبائن.' : null;
+      if (success) {
+        titleController.clear();
+        bodyController.clear();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _AdminPage(children: [
+      const _PageTitle(
+          title: 'إرسال إشعار عام',
+          subtitle: 'يصل الإشعار إلى جميع الزبائن عبر الإشعارات الفورية'),
+      const SizedBox(height: 18),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: titleController,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(labelText: 'عنوان الإشعار'),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: bodyController,
+                onChanged: (_) => setState(() {}),
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'نص الإشعار'),
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: _canSend ? _send : null,
+                icon: sending
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send_rounded),
+                label: const Text('إرسال إلى جميع الزبائن'),
+              ),
+              if (resultMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(resultMessage!,
+                    style: const TextStyle(color: YallaColors.success)),
+              ],
+            ],
+          ),
+        ),
+      ),
     ]);
   }
 }

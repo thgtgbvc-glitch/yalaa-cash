@@ -7,6 +7,7 @@ import { PaginationQueryDto } from "../common/pagination.dto";
 import { CustomerService } from "./customer.service";
 import {
   RedeemDigitalProductDto,
+  RegisterDeviceTokenDto,
   RequestCashRedemptionDto,
   UpdateCustomerGovernorateDto,
   UpdateCustomerProfileDto,
@@ -51,6 +52,14 @@ export class CustomerController {
   @Post("qr-token")
   issueQrToken(@CurrentUser() user: AuthenticatedUser) {
     return this.customer.issueQrToken(user.id);
+  }
+
+  @Post("device-token")
+  registerDeviceToken(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RegisterDeviceTokenDto,
+  ) {
+    return this.customer.registerDeviceToken(user.id, dto);
   }
 
   @Get("transactions")

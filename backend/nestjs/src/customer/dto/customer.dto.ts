@@ -48,3 +48,10 @@ export class RedeemDigitalProductDto {
   @MaxLength(20)
   phoneNumber?: string;
 }
+
+export class RegisterDeviceTokenDto {
+  @IsString()
+  @MinLength(16)
+  @MaxLength(4096)
+  token!: string;
+}

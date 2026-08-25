@@ -11,12 +11,14 @@ import {
   CashRequestStatus,
   PointsEntryType,
   Prisma,
+  RedemptionStatus,
 } from "@prisma/client";
 import { randomUUID } from "crypto";
 import {
   PaginatedResponse,
   PaginationQueryDto,
 } from "../common/pagination.dto";
+import { FcmService } from "../notifications/fcm.service";
 import {
   presentBanner,
   presentCashRequest,
@@ -30,6 +32,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import {
   RedeemDigitalProductDto,
+  RegisterDeviceTokenDto,
   RequestCashRedemptionDto,
   UpdateCustomerGovernorateDto,
   UpdateCustomerProfileDto,
@@ -41,6 +44,7 @@ export class CustomerService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly fcm: FcmService,
   ) {}
 
   async getProfile(userId: string) {
@@ -132,6 +136,15 @@ export class CustomerService {
       payload: `yallacash://customer/${userId}?v=2&token=${encodeURIComponent(token)}`,
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
     };
+  }
+
+  async registerDeviceToken(userId: string, dto: RegisterDeviceTokenDto) {
+    await this.prisma.deviceToken.upsert({
+      where: { token: dto.token },
+      update: { userId },
+      create: { userId, token: dto.token },
+    });
+    return { success: true };
   }
 
   async listTransactions(
@@ -254,9 +267,26 @@ export class CustomerService {
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
 
+    // Fire-and-forget: FcmService.sendToUser never rejects, but this .catch
+    // is a deliberate backstop so a push notification can never turn into
+    // an unhandled promise rejection here, no matter what changes later.
+    void this.fcm
+      .sendToUser(userId, {
+        title: "طلبك قيد المعالجة",
+        body: "استلمنا طلب استبدال النقاط بكاش وهو الآن قيد المعالجة.",
+      })
+      .catch(() => undefined);
+
     return presentCashRequest(request);
   }
 
+  /**
+   * Creates a PENDING request only — points are not deducted here. They are
+   * deducted exactly once, by the admin resolver, when the request is
+   * FULFILLED (mirrors requestCashRedemption's reserve-without-deduct
+   * pattern so a customer can't over-request across both request types at
+   * once; see pendingHeldPoints).
+   */
   async redeemDigitalProduct(userId: string, dto: RedeemDigitalProductDto) {
     const redemption = await this.prisma.$transaction(
       async (tx) => {
@@ -287,12 +317,6 @@ export class CustomerService {
           throw new BadRequestException("Insufficient available points.");
         }
 
-        const updatedCustomer = await tx.customerProfile.update({
-          where: { userId },
-          data: { pointsBalance: { decrement: product.costInPoints } },
-          select: { pointsBalance: true },
-        });
-
         const saved = await tx.productRedemption.create({
           data: {
             customerId: userId,
@@ -305,11 +329,11 @@ export class CustomerService {
         await tx.pointsLedgerEntry.create({
           data: {
             customerId: userId,
-            entryType: PointsEntryType.PRODUCT_REDEEM,
-            pointsDelta: -product.costInPoints,
-            balanceAfter: updatedCustomer.pointsBalance,
+            entryType: PointsEntryType.PRODUCT_RESERVE,
+            pointsDelta: 0,
+            balanceAfter: customer.pointsBalance,
             referenceId: saved.id,
-            note: "Digital product redeemed.",
+            note: "Digital product redemption points reserved.",
           },
         });
 
@@ -317,6 +341,13 @@ export class CustomerService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    void this.fcm
+      .sendToUser(userId, {
+        title: "طلبك قيد المعالجة",
+        body: "استلمنا طلب استبدال المنتج الرقمي وهو الآن قيد المعالجة.",
+      })
+      .catch(() => undefined);
 
     return presentProductRedemption(redemption);
   }
@@ -330,12 +361,24 @@ export class CustomerService {
 
   private async pendingHeldPoints(
     userId: string,
-    prisma: Pick<PrismaService, "cashRedemptionRequest"> = this.prisma,
+    prisma: Pick<
+      PrismaService,
+      "cashRedemptionRequest" | "productRedemption"
+    > = this.prisma,
   ): Promise<number> {
-    const aggregate = await prisma.cashRedemptionRequest.aggregate({
-      where: { customerId: userId, status: CashRequestStatus.PENDING },
-      _sum: { pointsRequested: true },
-    });
-    return toNumber(aggregate._sum.pointsRequested ?? 0n);
+    const [cash, products] = await Promise.all([
+      prisma.cashRedemptionRequest.aggregate({
+        where: { customerId: userId, status: CashRequestStatus.PENDING },
+        _sum: { pointsRequested: true },
+      }),
+      prisma.productRedemption.aggregate({
+        where: { customerId: userId, status: RedemptionStatus.PENDING },
+        _sum: { pointsCostSnapshot: true },
+      }),
+    ]);
+    return (
+      toNumber(cash._sum.pointsRequested ?? 0n) +
+      toNumber(products._sum.pointsCostSnapshot ?? 0n)
+    );
   }
 }

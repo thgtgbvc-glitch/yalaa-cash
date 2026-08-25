@@ -16,6 +16,7 @@ import { AdminService } from "./admin.service";
 import {
   AdjustCustomerPointsDto,
   AdminListCashRequestsDto,
+  AdminListProductRedemptionsDto,
   AdminListTransactionsDto,
   CreateBannerDto,
   CreateDigitalProductDto,
@@ -23,6 +24,8 @@ import {
   CreateMerchantAccountDto,
   CreateStoreDto,
   ResolveCashRequestDto,
+  ResolveProductRedemptionDto,
+  SendNotificationDto,
   SettleStoreDto,
   SettlementQueryDto,
   UpdateBannerDto,
@@ -87,6 +90,24 @@ export class AdminController {
     @Body() dto: ResolveCashRequestDto,
   ) {
     return this.admin.resolveCashRequest(user.id, requestId, dto.approve);
+  }
+
+  @Get("product-redemptions")
+  listProductRedemptions(@Query() query: AdminListProductRedemptionsDto) {
+    return this.admin.listProductRedemptions(query);
+  }
+
+  @Post("product-redemptions/:redemptionId/resolve")
+  resolveProductRedemption(
+    @Param("redemptionId") redemptionId: string,
+    @Body() dto: ResolveProductRedemptionDto,
+  ) {
+    return this.admin.resolveProductRedemption(redemptionId, dto);
+  }
+
+  @Post("notifications")
+  sendNotification(@Body() dto: SendNotificationDto) {
+    return this.admin.sendGeneralNotification(dto);
   }
 
   @Get("stores")

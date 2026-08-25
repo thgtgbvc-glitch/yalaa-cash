@@ -2,6 +2,8 @@ enum AuthMethod { facebook, gmail, phone }
 
 enum CashRequestStatus { pending, settled, rejected }
 
+enum RedemptionStatus { pending, fulfilled, rejected }
+
 class Customer {
   const Customer({
     required this.id,
@@ -184,12 +186,14 @@ class LoyaltyTransaction {
     required this.customerShareSyp,
     required this.customerPointsEarned,
     required this.createdAt,
+    this.customerName,
   });
 
   final String id;
   final String storeId;
   final String storeName;
   final String customerId;
+  final String? customerName;
   final int amountSyp;
   final double commissionRateSnapshot;
   final int commissionAmountSyp;
@@ -251,6 +255,34 @@ class CashRedemptionRequest {
   final CashRequestStatus status;
   final DateTime createdAt;
   final DateTime? settledAt;
+}
+
+class ProductRedemption {
+  const ProductRedemption({
+    required this.id,
+    required this.customerId,
+    required this.productId,
+    required this.pointsCostSnapshot,
+    required this.status,
+    required this.createdAt,
+    this.customerName,
+    this.customerPhone,
+    this.productName,
+    this.phoneNumber,
+    this.fulfilledAt,
+  });
+
+  final String id;
+  final String customerId;
+  final String? customerName;
+  final String? customerPhone;
+  final String productId;
+  final String? productName;
+  final int pointsCostSnapshot;
+  final String? phoneNumber;
+  final RedemptionStatus status;
+  final DateTime createdAt;
+  final DateTime? fulfilledAt;
 }
 
 class MerchantAccount {

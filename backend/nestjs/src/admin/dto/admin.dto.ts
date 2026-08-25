@@ -233,6 +233,29 @@ export class ResolveCashRequestDto {
   approve!: boolean;
 }
 
+export class AdminListProductRedemptionsDto {
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
+export class ResolveProductRedemptionDto {
+  @IsBoolean()
+  approve!: boolean;
+}
+
+export class SendNotificationDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  title!: string;
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(500)
+  body!: string;
+}
+
 export class SettlementQueryDto {
   @IsOptional()
   @IsDateString()

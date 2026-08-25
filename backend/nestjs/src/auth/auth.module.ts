@@ -20,6 +20,6 @@ import { PasswordService } from "./password.service";
   ],
   controllers: [AuthController],
   providers: [AuthService, PasswordService, FirebaseOAuthService],
-  exports: [AuthService, JwtModule, PasswordService],
+  exports: [AuthService, JwtModule, PasswordService, FirebaseOAuthService],
 })
 export class AuthModule {}

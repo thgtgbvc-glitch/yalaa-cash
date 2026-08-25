@@ -105,6 +105,9 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
+  Future<void> registerDeviceToken(String token) async {}
+
+  @override
   Future<Customer> getCustomerProfile() async => _store.currentCustomer!;
 
   @override
@@ -399,6 +402,28 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
     }
     return _store.cashRequests.firstWhere((request) => request.id == requestId);
   }
+
+  @override
+  Future<List<ProductRedemption>> listAdminProductRedemptions(
+          {String? status}) async =>
+      const [];
+
+  @override
+  Future<ProductRedemption> resolveProductRedemption({
+    required String redemptionId,
+    required bool approve,
+  }) async {
+    throw const YallaCashFailure(
+      code: 'not_supported',
+      message: 'غير مدعوم في العرض التجريبي.',
+    );
+  }
+
+  @override
+  Future<void> sendGeneralNotification({
+    required String title,
+    required String body,
+  }) async {}
 
   @override
   Future<List<PartnerStore>> listAdminStores() async =>
