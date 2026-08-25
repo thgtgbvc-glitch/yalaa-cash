@@ -1,5 +1,7 @@
 import {
   Injectable,
+  Logger,
+  OnModuleInit,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -15,10 +17,32 @@ interface VerifiedOAuthIdentity {
 }
 
 @Injectable()
-export class FirebaseOAuthService {
+export class FirebaseOAuthService implements OnModuleInit {
+  private readonly logger = new Logger(FirebaseOAuthService.name);
   private app?: App;
 
   constructor(private readonly config: ConfigService) {}
+
+  /**
+   * Logs, once at boot, whether Firebase Admin actually initializes with
+   * this process's env — never the credential values. Initializing eagerly
+   * here (instead of waiting for the first real OAuth request) also makes a
+   * malformed FIREBASE_PRIVATE_KEY fail fast in the deploy logs rather than
+   * on a user's first Google sign-in attempt.
+   */
+  onModuleInit(): void {
+    const projectId = this.config.get<string>("FIREBASE_PROJECT_ID");
+    try {
+      this.getApp();
+      this.logger.log(
+        `Firebase Admin: configured=true projectId=${projectId}`,
+      );
+    } catch {
+      this.logger.log(
+        `Firebase Admin: configured=false (FIREBASE_PROJECT_ID/CLIENT_EMAIL/PRIVATE_KEY missing or invalid)`,
+      );
+    }
+  }
 
   async verifyCustomerToken(
     provider: Extract<AuthMethod, "GOOGLE" | "FACEBOOK">,
