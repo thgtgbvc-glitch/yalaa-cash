@@ -21,21 +21,6 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.1.0" apply false
     id("org.jetbrains.kotlin.android") version "2.4.0" apply false
-    // Reads android/app/google-services.json at build time so firebase_core
-    // can initialize without an explicit FirebaseOptions in Dart.
-    id("com.google.gms.google-services") version "4.4.2" apply false
-}
-
-// The Flutter Gradle plugin adds its own storage.googleapis.com/download.flutter.io
-// mirror to every project's repositories when it applies. Declaring google()/
-// mavenCentral() here, centrally, ensures they are registered before that plugin
-// runs and are tried for normal Android/Firebase dependency resolution instead of
-// depending solely on that mirror being reachable.
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-    }
 }
 
 include(":app")

@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart';
 class YallaCashEnvironment {
   const YallaCashEnvironment({
     required this.apiBaseUrl,
-    this.apiTimeout = const Duration(seconds: 15),
+    this.apiTimeout = const Duration(seconds: 60),
     this.useRemoteBackend = false,
   });
 

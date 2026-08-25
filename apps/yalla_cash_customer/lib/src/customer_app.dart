@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -29,8 +28,6 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
       : CustomerAppCubit(repository);
   ThemeMode themeMode = ThemeMode.light;
   bool restoringSession = false;
-  bool _pushSetupDone = false;
-  static final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
@@ -79,14 +76,7 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
         final state = snapshot.data ?? customerCubit.state;
         final restoring =
             restoringSession && state.customer == null && state.session == null;
-        if (widget.store == null &&
-            state.customer != null &&
-            !_pushSetupDone) {
-          _pushSetupDone = true;
-          unawaited(_setupPushNotifications());
-        }
         return MaterialApp(
-          scaffoldMessengerKey: _messengerKey,
           debugShowCheckedModeBanner: false,
           title: 'يلا كاش',
           theme: buildYallaTheme(Brightness.light),
@@ -123,38 +113,6 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
   void _loginDemoCustomer() {
     widget.store?.loginDemoCustomer();
     unawaited(customerCubit.refresh());
-  }
-
-  /// Registers this device's FCM token and wires up notification handling.
-  /// Best-effort: notifications are a non-critical enhancement, so any
-  /// failure here (missing permission, no Firebase config, etc.) is
-  /// swallowed rather than surfaced to the user.
-  Future<void> _setupPushNotifications() async {
-    try {
-      await FirebaseMessaging.instance.requestPermission();
-      final token = await FirebaseMessaging.instance.getToken();
-      if (token != null) {
-        await customerCubit.registerDeviceToken(token);
-      }
-      FirebaseMessaging.instance.onTokenRefresh.listen(
-        (newToken) => unawaited(customerCubit.registerDeviceToken(newToken)),
-      );
-      FirebaseMessaging.onMessage.listen(_showForegroundNotification);
-    } on Object {
-      // Push notifications are optional; the rest of the app must keep working.
-    }
-  }
-
-  void _showForegroundNotification(RemoteMessage message) {
-    final title = message.notification?.title;
-    final body = message.notification?.body;
-    final text = [
-      if (title != null && title.isNotEmpty) title,
-      if (body != null && body.isNotEmpty) body,
-    ].join(' — ');
-    if (text.isEmpty) return;
-    _messengerKey.currentState
-        ?.showSnackBar(SnackBar(content: Text(text)));
   }
 }
 
