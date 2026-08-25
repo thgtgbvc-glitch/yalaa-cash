@@ -44,6 +44,11 @@ import { StoresModule } from "./stores/stores.module";
         FIREBASE_PROJECT_ID: Joi.string().allow("").optional(),
         FIREBASE_CLIENT_EMAIL: Joi.string().allow("").optional(),
         FIREBASE_PRIVATE_KEY: Joi.string().allow("").optional(),
+        LINKSYRIA_API_URL: Joi.string()
+          .uri({ scheme: ["http", "https"] })
+          .default("https://linksyria.online"),
+        LINKSYRIA_API_KEY: Joi.string().allow("").optional(),
+        LINKSYRIA_TIMEOUT_MS: Joi.number().integer().positive().default(10000),
       }),
     }),
     PrismaModule,

@@ -18,6 +18,7 @@ import {
   VerifyPhoneOtpDto,
 } from "./dto/auth.dto";
 import { FirebaseOAuthService } from "./firebase-oauth.service";
+import { LinkSyriaOtpService } from "./linksyria/linksyria-otp.service";
 import { PasswordService } from "./password.service";
 
 @Injectable()
@@ -28,12 +29,14 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly passwords: PasswordService,
     private readonly firebaseOAuth: FirebaseOAuthService,
+    private readonly linkSyria: LinkSyriaOtpService,
   ) {}
 
   async requestPhoneOtp(dto: { phone: string }): Promise<OtpStartResponseDto> {
     const phone = this.normalizePhone(dto.phone);
     const devMode = this.config.get<boolean>("OTP_DEV_MODE", false);
-    if (!devMode && this.config.get<string>("NODE_ENV") === "production") {
+    const smsProviderReady = devMode || this.linkSyria.isConfigured();
+    if (!smsProviderReady && this.config.get<string>("NODE_ENV") === "production") {
       throw new ServiceUnavailableException("SMS provider is not configured.");
     }
 
@@ -46,6 +49,12 @@ export class AuthService {
         expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
       },
     });
+
+    // OTP_DEV_MODE keeps returning the code directly in the response and
+    // never sends a real SMS, exactly as before LinkSyria was integrated.
+    if (!devMode) {
+      await this.linkSyria.sendOtp(phone, code);
+    }
 
     return {
       challengeId: challenge.id,
