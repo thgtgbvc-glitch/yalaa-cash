@@ -124,6 +124,7 @@ model Governorate {
 
   customers CustomerProfile[]
   banners   Banner[]
+  stores    Store[]
 
   @@index([isActive, displayOrder])
 }
@@ -160,6 +161,8 @@ model Store {
   imageUrl       String?
   iconSeed       Int      @default(0)
   isActive       Boolean  @default(true)
+  governorateId  String   @db.Uuid
+  governorate    Governorate @relation(fields: [governorateId], references: [id])
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -169,6 +172,7 @@ model Store {
 
   @@index([city, category])
   @@index([isActive])
+  @@index([governorateId, isActive])
 }
 
 model MerchantAccount {

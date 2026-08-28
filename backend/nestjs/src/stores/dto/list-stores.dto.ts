@@ -10,4 +10,8 @@ export class ListStoresDto {
   @IsString()
   @MaxLength(60)
   category?: string;
+
+  @IsOptional()
+  @IsString()
+  governorateId?: string;
 }

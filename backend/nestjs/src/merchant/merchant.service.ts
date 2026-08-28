@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { PointsEntryType, Prisma } from "@prisma/client";
+import { PointsEntryType, Prisma, SettlementStatus } from "@prisma/client";
 import { createHmac } from "crypto";
 import { PaginationQueryDto } from "../common/pagination.dto";
 import {
@@ -172,14 +172,45 @@ export class MerchantService {
     return presentTransaction(transaction);
   }
 
+  /// The start of this store's current unpaid accounting cycle: the
+  /// `settledAt` instant of its most recent SETTLED settlement, or
+  /// `undefined` if never settled (current cycle = its entire history).
+  ///
+  /// `settledAt` (not `periodEnd`) is used deliberately: `periodEnd` is a
+  /// calendar-month boundary that can be in the future relative to the
+  /// moment "تم التسديد" is actually clicked, so using it as the new cycle's
+  /// start would wrongly exclude legitimate transactions made after
+  /// settlement but before the calendar month ends. `settledAt` is the exact
+  /// instant the settlement action occurred. Mirrors
+  /// AdminService.currentCycleStart() so Admin and Merchant agree exactly.
+  private async currentCycleStart(storeId: string): Promise<Date | undefined> {
+    const last = await this.prisma.merchantSettlement.findFirst({
+      where: { storeId, status: SettlementStatus.SETTLED },
+      orderBy: { settledAt: "desc" },
+    });
+    return last?.settledAt ?? undefined;
+  }
+
   async getSummary(userId: string, query: MerchantPeriodQueryDto) {
     const account = await this.getMerchantAccount(userId);
+    const hasExplicitPeriod = Boolean(query.from || query.to);
     const { from, to } = this.periodBounds(query);
+
+    // Explicit period query (historical browsing) keeps the original
+    // calendar-bounded behavior. The default "current" view instead
+    // aggregates from this store's own current-cycle start, so it resets to
+    // 0/0/0 immediately after settlement and accumulates only new activity.
+    const cycleStart = hasExplicitPeriod
+      ? from
+      : await this.currentCycleStart(account.storeId);
+    const createdAt: Prisma.DateTimeFilter | undefined = hasExplicitPeriod
+      ? { gte: from, lt: to }
+      : cycleStart
+        ? { gte: cycleStart }
+        : undefined;
+
     const aggregate = await this.prisma.loyaltyTransaction.aggregate({
-      where: {
-        storeId: account.storeId,
-        createdAt: { gte: from, lt: to },
-      },
+      where: { storeId: account.storeId, createdAt },
       _count: { id: true },
       _sum: {
         amountSyp: true,
@@ -189,7 +220,7 @@ export class MerchantService {
 
     return {
       storeId: account.storeId,
-      from: from.toISOString(),
+      from: (cycleStart ?? from).toISOString(),
       to: to.toISOString(),
       transactionCount: aggregate._count.id,
       totalSalesSyp: toNumber(aggregate._sum.amountSyp ?? 0n),

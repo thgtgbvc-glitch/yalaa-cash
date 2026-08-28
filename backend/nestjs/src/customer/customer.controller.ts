@@ -103,4 +103,9 @@ export class CustomerController {
   ) {
     return this.customer.redeemDigitalProduct(user.id, dto);
   }
+
+  @Get("redemptions/products")
+  listProductRedemptions(@CurrentUser() user: AuthenticatedUser) {
+    return this.customer.listProductRedemptions(user.id);
+  }
 }

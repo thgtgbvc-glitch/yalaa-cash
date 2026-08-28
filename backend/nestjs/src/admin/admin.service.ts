@@ -330,8 +330,8 @@ export class AdminService {
     if (dto.approve) {
       void this.fcm
         .sendToUser(updated.customerId, {
-          title: "تمت العملية",
-          body: "تم تسليم طلب استبدال المنتج الرقمي بنجاح.",
+          title: "تم الاستبدال",
+          body: "تم استبدال طلبك بنجاح.",
         })
         .catch(() => undefined);
     }
@@ -476,6 +476,7 @@ export class AdminService {
         imageUrl: dto.imageUrl?.trim() || null,
         iconSeed: dto.iconSeed ?? 0,
         isActive: dto.isActive ?? true,
+        governorateId: dto.governorateId,
       },
     });
     return presentStore(store);
@@ -512,6 +513,9 @@ export class AdminService {
           : {}),
         ...(dto.iconSeed !== undefined ? { iconSeed: dto.iconSeed } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(dto.governorateId !== undefined
+          ? { governorateId: dto.governorateId }
+          : {}),
       },
     });
     return presentStore(store);
@@ -622,8 +626,27 @@ export class AdminService {
     };
   }
 
+  /// The start of a store's current unpaid accounting cycle: the `settledAt`
+  /// instant of its most recent SETTLED settlement, or `undefined` if the
+  /// store has never been settled (current cycle = its entire history).
+  ///
+  /// `settledAt` (not `periodEnd`) is used deliberately: `periodEnd` is a
+  /// calendar-month boundary that can be in the future relative to the
+  /// moment "تم التسديد" is actually clicked, so using it as the new cycle's
+  /// start would wrongly exclude legitimate transactions made after
+  /// settlement but before the calendar month ends. `settledAt` is the exact
+  /// instant the settlement action occurred.
+  private async currentCycleStart(storeId: string): Promise<Date | undefined> {
+    const last = await this.prisma.merchantSettlement.findFirst({
+      where: { storeId, status: SettlementStatus.SETTLED },
+      orderBy: { settledAt: "desc" },
+    });
+    return last?.settledAt ?? undefined;
+  }
+
   async listSettlements(query: SettlementQueryDto) {
     const { periodStart, periodEnd } = this.periodBounds(query);
+    const hasExplicitPeriod = Boolean(query.periodStart || query.periodEnd);
     const stores = await this.prisma.store.findMany({
       orderBy: { name: "asc" },
     });
@@ -636,11 +659,17 @@ export class AdminService {
 
     const items = await Promise.all(
       stores.map(async (store) => {
+        // Explicit period query (historical browsing) keeps the original
+        // calendar-bounded behavior. The default "current" view instead
+        // aggregates from this store's own current-cycle start, so it always
+        // matches exactly what settleStore() would snapshot right now.
+        const createdAt: Prisma.DateTimeFilter | undefined = hasExplicitPeriod
+          ? { gte: periodStart, lt: periodEnd }
+          : await this.currentCycleStart(store.id).then((cycleStart) =>
+              cycleStart ? { gte: cycleStart } : undefined,
+            );
         const aggregate = await this.prisma.loyaltyTransaction.aggregate({
-          where: {
-            storeId: store.id,
-            createdAt: { gte: periodStart, lt: periodEnd },
-          },
+          where: { storeId: store.id, createdAt },
           _count: { id: true },
           _sum: {
             amountSyp: true,
@@ -677,10 +706,16 @@ export class AdminService {
       throw new BadRequestException("Invalid settlement period.");
     }
 
+    // Snapshot exactly the store's current unpaid cycle (same boundary
+    // listSettlements() is currently displaying as "outstanding") rather
+    // than blindly the requested calendar period — this correctly absorbs
+    // any earlier unsettled backlog (e.g. a skipped prior month) into this
+    // settlement instead of silently losing it.
+    const cycleStart = await this.currentCycleStart(dto.storeId);
     const aggregate = await this.prisma.loyaltyTransaction.aggregate({
       where: {
         storeId: dto.storeId,
-        createdAt: { gte: periodStart, lt: periodEnd },
+        createdAt: cycleStart ? { gte: cycleStart } : undefined,
       },
       _count: { id: true },
       _sum: {

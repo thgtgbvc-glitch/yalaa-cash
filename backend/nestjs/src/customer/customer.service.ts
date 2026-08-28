@@ -215,6 +215,18 @@ export class CustomerService {
     return { items: requests.map(presentCashRequest) };
   }
 
+  // Read-only history for the authenticated customer only — customerId is
+  // always taken from the verified JWT (userId), never accepted from the
+  // caller, so a customer can never list another customer's redemptions.
+  async listProductRedemptions(userId: string) {
+    const redemptions = await this.prisma.productRedemption.findMany({
+      where: { customerId: userId },
+      include: { product: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    return { items: redemptions.map(presentProductRedemption) };
+  }
+
   async requestCashRedemption(userId: string, dto: RequestCashRedemptionDto) {
     const points = BigInt(dto.points);
     const request = await this.prisma.$transaction(
@@ -311,6 +323,29 @@ export class CustomerService {
         if (!customer)
           throw new NotFoundException("Customer profile was not found.");
 
+        // Same customer + same product: an existing PENDING request blocks
+        // a second one (prevents a rapid double-tap or a direct duplicate
+        // API call from creating two active requests for the same
+        // product). A past FULFILLED or REJECTED request never blocks a
+        // new one — the same product can be redeemed again over time.
+        // Checked inside this SERIALIZABLE transaction so two genuinely
+        // concurrent submissions can't both observe "no pending row yet"
+        // and both succeed — Postgres will force one to serialize after
+        // the other, at which point it sees the row the first one created.
+        const existingPending = await tx.productRedemption.findFirst({
+          where: {
+            customerId: userId,
+            productId: dto.productId,
+            status: RedemptionStatus.PENDING,
+          },
+          select: { id: true },
+        });
+        if (existingPending) {
+          throw new ConflictException(
+            "A pending redemption request already exists for this product.",
+          );
+        }
+
         const held = await this.pendingHeldPoints(userId, tx);
         const available = customer.pointsBalance - BigInt(held);
         if (product.costInPoints > available) {
@@ -344,8 +379,8 @@ export class CustomerService {
 
     void this.fcm
       .sendToUser(userId, {
-        title: "طلبك قيد المعالجة",
-        body: "استلمنا طلب استبدال المنتج الرقمي وهو الآن قيد المعالجة.",
+        title: "طلبك قيد المراجعة",
+        body: "استلمنا طلب استبدال المنتج الرقمي وهو الآن قيد المراجعة.",
       })
       .catch(() => undefined);
 

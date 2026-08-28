@@ -112,6 +112,7 @@ export function presentStore(store: Store) {
     imageUrl: store.imageUrl,
     iconSeed: store.iconSeed,
     isActive: store.isActive,
+    governorateId: store.governorateId,
     createdAt: store.createdAt.toISOString(),
   };
 }

@@ -83,6 +83,8 @@ async function main(): Promise<void> {
     },
   });
 
+  const idlibGovernorateId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+
   const stores = [
     {
       id: "11111111-1111-4111-8111-111111111111",
@@ -93,6 +95,7 @@ async function main(): Promise<void> {
       description: "مطعم شامي تقليدي بأطباق منزلية.",
       location: "دمشق - المزة",
       iconSeed: 0,
+      governorateId: idlibGovernorateId,
     },
     {
       id: "22222222-2222-4222-8222-222222222222",
@@ -103,6 +106,7 @@ async function main(): Promise<void> {
       description: "ماركت شامل للمواد الغذائية والمنزلية.",
       location: "دمشق - الميدان",
       iconSeed: 1,
+      governorateId: idlibGovernorateId,
     },
     {
       id: "33333333-3333-4333-8333-333333333333",
@@ -113,6 +117,7 @@ async function main(): Promise<void> {
       description: "كافيه هادئ لمحبي القهوة المختصة.",
       location: "دمشق - أبو رمانة",
       iconSeed: 2,
+      governorateId: idlibGovernorateId,
     },
   ];
 

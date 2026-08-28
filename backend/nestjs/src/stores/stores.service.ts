@@ -17,6 +17,10 @@ export class StoresService {
         ...(query.category
           ? { category: { equals: query.category.trim(), mode: "insensitive" } }
           : {}),
+        // Strict governorate match by id — never falls back to showing
+        // stores from a different governorate. Omitted entirely (no
+        // filter) only when the caller doesn't provide a governorateId.
+        ...(query.governorateId ? { governorateId: query.governorateId } : {}),
       },
       orderBy: [{ city: "asc" }, { category: "asc" }, { name: "asc" }],
     });

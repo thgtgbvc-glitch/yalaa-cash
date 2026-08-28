@@ -8,6 +8,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
   Max,
   MaxLength,
   Min,
@@ -87,6 +88,9 @@ export class CreateStoreDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsString()
+  governorateId!: string;
 }
 
 export class UpdateStoreDto {
@@ -138,6 +142,10 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  governorateId?: string;
 }
 
 export class CreateDigitalProductDto {
@@ -322,6 +330,12 @@ export class CreateBannerDto {
 
   @IsString()
   @MaxLength(500)
+  // Structural validation only (scheme http/https + non-empty host) — never
+  // requires a file extension, matching the Admin Flutter validation.
+  @IsUrl(
+    { protocols: ["http", "https"], require_protocol: true, require_tld: false },
+    { message: "imageUrl must be a valid http:// or https:// URL." },
+  )
   imageUrl!: string;
 
   @IsOptional()
@@ -373,6 +387,10 @@ export class UpdateBannerDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
+  @IsUrl(
+    { protocols: ["http", "https"], require_protocol: true, require_tld: false },
+    { message: "imageUrl must be a valid http:// or https:// URL." },
+  )
   imageUrl?: string;
 
   @IsOptional()
