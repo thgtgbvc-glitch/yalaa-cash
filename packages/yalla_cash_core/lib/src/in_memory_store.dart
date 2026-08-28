@@ -84,6 +84,7 @@ class YallaCashStore extends ChangeNotifier {
         description: 'مطعم شامي تقليدي بأطباق منزلية.',
         location: 'دمشق - المزة',
         iconSeed: 0,
+        governorateId: 'gov-damascus',
       ),
       PartnerStore(
         id: 'store-002',
@@ -93,6 +94,7 @@ class YallaCashStore extends ChangeNotifier {
         description: 'ماركت شامل للمواد الغذائية والمنزلية.',
         location: 'دمشق - الميدان',
         iconSeed: 1,
+        governorateId: 'gov-damascus',
       ),
       PartnerStore(
         id: 'store-003',
@@ -102,6 +104,7 @@ class YallaCashStore extends ChangeNotifier {
         description: 'كافيه هادئ لمحبي القهوة المختصة.',
         location: 'دمشق - أبو رمانة',
         iconSeed: 2,
+        governorateId: 'gov-damascus',
       ),
       PartnerStore(
         id: 'store-004',
@@ -111,6 +114,7 @@ class YallaCashStore extends ChangeNotifier {
         description: 'صالون عناية وتجميل متكامل.',
         location: 'إدلب - مركز المدينة',
         iconSeed: 3,
+        governorateId: 'gov-idlib',
       ),
       PartnerStore(
         id: 'store-005',
@@ -120,6 +124,7 @@ class YallaCashStore extends ChangeNotifier {
         description: 'صيدلية متكاملة على مدار الساعة.',
         location: 'إدلب - شارع الثلاثين',
         iconSeed: 4,
+        governorateId: 'gov-idlib',
       ),
     ]);
 
@@ -378,6 +383,17 @@ class YallaCashStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Soft delete only: marks the store inactive. Never removes it (or any
+  // transaction/settlement data) from the in-memory store. The demo
+  // MerchantAccount model here has no isActive concept, so — unlike the
+  // real backend — there is nothing further to deactivate for it.
+  void deleteStore(String storeId) {
+    final index = _stores.indexWhere((item) => item.id == storeId);
+    if (index < 0) return;
+    _stores[index] = _stores[index].copyWith(isActive: false);
+    notifyListeners();
+  }
+
   void addPartnerStore() {
     _stores.add(
       PartnerStore(
@@ -388,6 +404,7 @@ class YallaCashStore extends ChangeNotifier {
         description: '',
         location: 'المدينة - الحي',
         iconSeed: _stores.length,
+        governorateId: _governorates.isNotEmpty ? _governorates.first.id : '',
       ),
     );
     notifyListeners();

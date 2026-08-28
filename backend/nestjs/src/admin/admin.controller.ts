@@ -166,6 +166,14 @@ export class AdminController {
     return this.admin.updateStore(storeId, dto);
   }
 
+  // Soft delete only: deactivates the store (and its merchant accounts),
+  // never physically deletes the row or any historical data. See
+  // AdminService.deleteStore().
+  @Delete("stores/:storeId")
+  deleteStore(@Param("storeId") storeId: string) {
+    return this.admin.deleteStore(storeId);
+  }
+
   @Get("products")
   listProducts() {
     return this.admin.listProducts();

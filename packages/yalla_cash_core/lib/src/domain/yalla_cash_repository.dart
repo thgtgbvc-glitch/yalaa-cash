@@ -253,6 +253,10 @@ abstract class YallaCashRepository {
   Future<List<PartnerStore>> listAdminStores();
   Future<PartnerStore> createStore(PartnerStore store);
   Future<PartnerStore> updateStore(PartnerStore store);
+  /// Soft delete: deactivates the store (and its merchant account(s)) so it
+  /// disappears from Customer listings, without touching any historical
+  /// transaction/settlement data.
+  Future<void> deleteStore(String storeId);
   Future<List<DigitalProduct>> listAdminProducts();
   Future<DigitalProduct> createProduct(DigitalProduct product);
   Future<DigitalProduct> updateProduct(DigitalProduct product);

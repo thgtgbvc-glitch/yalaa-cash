@@ -521,6 +521,37 @@ export class AdminService {
     return presentStore(store);
   }
 
+  /// Soft delete only. A Store is never physically deleted — it, and every
+  /// LoyaltyTransaction/MerchantSettlement row that references it, must
+  /// remain intact forever for financial/audit history. "Delete" here means:
+  /// mark the store inactive (so it immediately disappears from Customer's
+  /// active-store listing, which already filters `isActive: true`) and mark
+  /// its merchant account(s) inactive too (so the merchant can no longer
+  /// perform new operations for a store that's no longer customer-visible —
+  /// every merchant.service.ts operation already re-checks
+  /// `MerchantAccount.isActive` on every call, so this alone is sufficient).
+  /// Both writes happen in one transaction so they can never partially
+  /// apply. Calling this again on an already-inactive store is a safe no-op.
+  async deleteStore(storeId: string) {
+    const current = await this.prisma.store.findUnique({
+      where: { id: storeId },
+    });
+    if (!current) throw new NotFoundException("Store was not found.");
+
+    await this.prisma.$transaction([
+      this.prisma.store.update({
+        where: { id: storeId },
+        data: { isActive: false },
+      }),
+      this.prisma.merchantAccount.updateMany({
+        where: { storeId },
+        data: { isActive: false },
+      }),
+    ]);
+
+    return { success: true };
+  }
+
   async listProducts() {
     const products = await this.prisma.digitalProduct.findMany({
       orderBy: [{ isActive: "desc" }, { costInPoints: "asc" }, { name: "asc" }],
@@ -626,22 +657,17 @@ export class AdminService {
     };
   }
 
-  /// The start of a store's current unpaid accounting cycle: the `settledAt`
-  /// instant of its most recent SETTLED settlement, or `undefined` if the
-  /// store has never been settled (current cycle = its entire history).
-  ///
-  /// `settledAt` (not `periodEnd`) is used deliberately: `periodEnd` is a
-  /// calendar-month boundary that can be in the future relative to the
-  /// moment "تم التسديد" is actually clicked, so using it as the new cycle's
-  /// start would wrongly exclude legitimate transactions made after
-  /// settlement but before the calendar month ends. `settledAt` is the exact
-  /// instant the settlement action occurred.
-  private async currentCycleStart(storeId: string): Promise<Date | undefined> {
-    const last = await this.prisma.merchantSettlement.findFirst({
+  /// The store's most recent SETTLED settlement row, or `undefined` if the
+  /// store has never been settled. This is the single source of truth for
+  /// where the CURRENT accounting cycle begins — `settledAt` (not any
+  /// calendar boundary) is what separates already-settled transactions from
+  /// pending ones, so a store can be settled as many times as needed, even
+  /// repeatedly on the same calendar day, the moment new transactions exist.
+  private async latestSettlement(storeId: string) {
+    return this.prisma.merchantSettlement.findFirst({
       where: { storeId, status: SettlementStatus.SETTLED },
       orderBy: { settledAt: "desc" },
     });
-    return last?.settledAt ?? undefined;
   }
 
   async listSettlements(query: SettlementQueryDto) {
@@ -650,35 +676,65 @@ export class AdminService {
     const stores = await this.prisma.store.findMany({
       orderBy: { name: "asc" },
     });
-    const settlements = await this.prisma.merchantSettlement.findMany({
-      where: { periodStart, periodEnd },
-    });
-    const settlementByStore = new Map(
-      settlements.map((item) => [item.storeId, item]),
+    // Explicit-period (historical) queries keep the original calendar-bounded
+    // lookup — entirely unaffected by the cycle-based status fix below.
+    const explicitSettlements = hasExplicitPeriod
+      ? await this.prisma.merchantSettlement.findMany({
+          where: { periodStart, periodEnd },
+        })
+      : [];
+    const explicitSettlementByStore = new Map(
+      explicitSettlements.map((item) => [item.storeId, item]),
     );
 
     const items = await Promise.all(
       stores.map(async (store) => {
-        // Explicit period query (historical browsing) keeps the original
-        // calendar-bounded behavior. The default "current" view instead
-        // aggregates from this store's own current-cycle start, so it always
-        // matches exactly what settleStore() would snapshot right now.
-        const createdAt: Prisma.DateTimeFilter | undefined = hasExplicitPeriod
-          ? { gte: periodStart, lt: periodEnd }
-          : await this.currentCycleStart(store.id).then((cycleStart) =>
-              cycleStart ? { gte: cycleStart } : undefined,
-            );
+        if (hasExplicitPeriod) {
+          const existing = explicitSettlementByStore.get(store.id);
+          const aggregate = await this.prisma.loyaltyTransaction.aggregate({
+            where: {
+              storeId: store.id,
+              createdAt: { gte: periodStart, lt: periodEnd },
+            },
+            _count: { id: true },
+            _sum: { amountSyp: true, commissionAmountSyp: true },
+          });
+          return {
+            id: existing?.id ?? null,
+            storeId: store.id,
+            storeName: store.name,
+            periodStart: periodStart.toISOString(),
+            periodEnd: periodEnd.toISOString(),
+            transactionCount: aggregate._count.id,
+            totalSalesSyp: toNumber(aggregate._sum.amountSyp ?? 0n),
+            commissionDueSyp: toNumber(
+              aggregate._sum.commissionAmountSyp ?? 0n,
+            ),
+            status: (existing?.status ?? SettlementStatus.OPEN).toLowerCase(),
+            settledAt: existing?.settledAt?.toISOString() ?? null,
+          };
+        }
+
+        // Default ("current") view: the cycle boundary is the store's real
+        // accounting history — the latest SETTLED row's settledAt instant —
+        // never a calendar month. A store reports SETTLED only when nothing
+        // new has happened since that instant; any new transaction, even
+        // seconds later on the same calendar day, reopens it (OPEN)
+        // immediately — there is no "once per day" restriction anywhere.
+        const latest = await this.latestSettlement(store.id);
+        const cycleStart = latest?.settledAt;
         const aggregate = await this.prisma.loyaltyTransaction.aggregate({
-          where: { storeId: store.id, createdAt },
-          _count: { id: true },
-          _sum: {
-            amountSyp: true,
-            commissionAmountSyp: true,
+          where: {
+            storeId: store.id,
+            createdAt: cycleStart ? { gte: cycleStart } : undefined,
           },
+          _count: { id: true },
+          _sum: { amountSyp: true, commissionAmountSyp: true },
         });
-        const existing = settlementByStore.get(store.id);
+        const hasPending = aggregate._count.id > 0;
+
         return {
-          id: existing?.id ?? null,
+          id: hasPending ? null : (latest?.id ?? null),
           storeId: store.id,
           storeName: store.name,
           periodStart: periodStart.toISOString(),
@@ -686,8 +742,14 @@ export class AdminService {
           transactionCount: aggregate._count.id,
           totalSalesSyp: toNumber(aggregate._sum.amountSyp ?? 0n),
           commissionDueSyp: toNumber(aggregate._sum.commissionAmountSyp ?? 0n),
-          status: (existing?.status ?? SettlementStatus.OPEN).toLowerCase(),
-          settledAt: existing?.settledAt?.toISOString() ?? null,
+          status: (
+            hasPending || !latest
+              ? SettlementStatus.OPEN
+              : SettlementStatus.SETTLED
+          ).toLowerCase(),
+          settledAt: hasPending
+            ? null
+            : (latest?.settledAt?.toISOString() ?? null),
         };
       }),
     );
@@ -696,26 +758,31 @@ export class AdminService {
   }
 
   async settleStore(adminUserId: string, dto: SettleStoreDto) {
-    const periodStart = new Date(dto.periodStart);
-    const periodEnd = new Date(dto.periodEnd);
-    if (
-      Number.isNaN(periodStart.getTime()) ||
-      Number.isNaN(periodEnd.getTime()) ||
-      periodEnd <= periodStart
-    ) {
-      throw new BadRequestException("Invalid settlement period.");
-    }
+    const store = await this.prisma.store.findUnique({
+      where: { id: dto.storeId },
+      select: { name: true, createdAt: true },
+    });
+    if (!store) throw new NotFoundException("Store was not found.");
 
-    // Snapshot exactly the store's current unpaid cycle (same boundary
-    // listSettlements() is currently displaying as "outstanding") rather
-    // than blindly the requested calendar period — this correctly absorbs
-    // any earlier unsettled backlog (e.g. a skipped prior month) into this
-    // settlement instead of silently losing it.
-    const cycleStart = await this.currentCycleStart(dto.storeId);
+    // Cycle boundaries are derived entirely server-side. The calendar
+    // periodStart/periodEnd supplied by the Admin client are accepted for
+    // API-shape compatibility but are never used as settlement history
+    // identity — two genuinely distinct cycles can fall on the same
+    // calendar day, and the client's value must not decide that.
+    const latest = await this.latestSettlement(dto.storeId);
+    const cycleStart = latest?.settledAt;
+    // `now` is captured once and used as this settlement's periodEnd,
+    // settledAt, AND the exclusive upper bound of the aggregate below — so a
+    // transaction created at/after this instant can never be counted in
+    // this settlement, and is guaranteed to be picked up by the NEXT cycle
+    // instead (whose lower bound is this same instant). Every transaction
+    // therefore belongs to exactly one cycle, with no overlap and no gap at
+    // the T1/T2 boundary.
+    const now = new Date();
     const aggregate = await this.prisma.loyaltyTransaction.aggregate({
       where: {
         storeId: dto.storeId,
-        createdAt: cycleStart ? { gte: cycleStart } : undefined,
+        createdAt: cycleStart ? { gte: cycleStart, lt: now } : { lt: now },
       },
       _count: { id: true },
       _sum: {
@@ -724,40 +791,51 @@ export class AdminService {
       },
     });
 
-    const settlement = await this.prisma.merchantSettlement.upsert({
-      where: {
-        storeId_periodStart_periodEnd: {
-          storeId: dto.storeId,
-          periodStart,
-          periodEnd,
-        },
-      },
-      update: {
-        transactionCount: aggregate._count.id,
-        totalSalesSyp: aggregate._sum.amountSyp ?? 0n,
-        commissionDueSyp: aggregate._sum.commissionAmountSyp ?? 0n,
-        status: SettlementStatus.SETTLED,
-        settledByUserId: adminUserId,
-        settledAt: new Date(),
-      },
-      create: {
+    if (aggregate._count.id === 0) {
+      // Nothing new to settle. Never create a zero-value row: if the store
+      // has already been settled and nothing has happened since, hand back
+      // that last real settlement unchanged; if it has never had anything
+      // to settle at all, fail cleanly instead of fabricating a row.
+      if (!latest) {
+        throw new BadRequestException(
+          "There are no transactions to settle for this store.",
+        );
+      }
+      return {
+        id: latest.id,
+        storeId: latest.storeId,
+        storeName: store.name,
+        periodStart: latest.periodStart.toISOString(),
+        periodEnd: latest.periodEnd.toISOString(),
+        transactionCount: latest.transactionCount,
+        totalSalesSyp: toNumber(latest.totalSalesSyp),
+        commissionDueSyp: toNumber(latest.commissionDueSyp),
+        status: latest.status.toLowerCase(),
+        settledAt: latest.settledAt?.toISOString() ?? null,
+      };
+    }
+
+    // A real, new cycle: always CREATE a new row. Every settlement is an
+    // immutable, permanent record — a later settlement must never
+    // update/overwrite an earlier one.
+    const settlement = await this.prisma.merchantSettlement.create({
+      data: {
         storeId: dto.storeId,
-        periodStart,
-        periodEnd,
+        periodStart: cycleStart ?? store.createdAt,
+        periodEnd: now,
         transactionCount: aggregate._count.id,
         totalSalesSyp: aggregate._sum.amountSyp ?? 0n,
         commissionDueSyp: aggregate._sum.commissionAmountSyp ?? 0n,
         status: SettlementStatus.SETTLED,
         settledByUserId: adminUserId,
-        settledAt: new Date(),
+        settledAt: now,
       },
-      include: { store: { select: { name: true } } },
     });
 
     return {
       id: settlement.id,
       storeId: settlement.storeId,
-      storeName: settlement.store.name,
+      storeName: store.name,
       periodStart: settlement.periodStart.toISOString(),
       periodEnd: settlement.periodEnd.toISOString(),
       transactionCount: settlement.transactionCount,

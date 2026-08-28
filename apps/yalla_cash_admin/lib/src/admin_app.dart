@@ -102,7 +102,7 @@ class AdminLoginScreen extends StatefulWidget {
 
 class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final emailController = TextEditingController(text: 'admin@yallacash.app');
-  final passwordController = TextEditingController(text: 'admin123');
+  final passwordController = TextEditingController(text: '123456');
   String? error;
   bool submitting = false;
 
@@ -392,6 +392,7 @@ class _AdminContent extends StatelessWidget {
         AdminSection.stores => StoresAdmin(
             cubit: cubit,
             stores: state.stores,
+            repository: repository,
           ),
         AdminSection.governorates => GovernoratesAdmin(repository: repository),
         AdminSection.banners => BannersAdmin(repository: repository),
@@ -1444,6 +1445,14 @@ class _BannersAdminState extends State<BannersAdmin> {
       _showBannerSnack('رابط الصورة يجب أن يبدأ بـ http أو https.');
       return;
     }
+    // targetUrl is optional (empty is allowed — the banner just won't be
+    // tappable), but if the admin enters a value it must be a real external
+    // http/https link — never an internal route like /stores or
+    // stores?category=... — since Customer only ever opens it externally.
+    if (result.targetUrl.isNotEmpty && !_isWebImageUrl(result.targetUrl)) {
+      _showBannerSnack('أدخل رابطاً صحيحاً يبدأ بـ http:// أو https://');
+      return;
+    }
     if (startsAtInvalid || endsAtInvalid) {
       _showBannerSnack('صيغة التاريخ يجب أن تكون ISO صالحة.');
       return;
@@ -1758,51 +1767,76 @@ class StoresAdmin extends StatelessWidget {
   const StoresAdmin({
     required this.cubit,
     required this.stores,
+    required this.repository,
     super.key,
   });
 
   final AdminAppCubit cubit;
   final List<PartnerStore> stores;
+  final YallaCashRepository repository;
 
   @override
-  Widget build(BuildContext context) => _AdminPage(children: [
-        _PageTitle(
-            title: 'إدارة المحلات',
-            subtitle: 'المحل الحصري ونسبة العمولة ومعلومات الظهور',
-            action: FilledButton.icon(
-                onPressed: () => _create(context),
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('إضافة محل'))),
-        const SizedBox(height: 18),
-        LayoutBuilder(builder: (context, constraints) {
-          final width = constraints.maxWidth >= 900
-              ? (constraints.maxWidth - 24) / 3
-              : constraints.maxWidth >= 560
-                  ? (constraints.maxWidth - 12) / 2
-                  : constraints.maxWidth;
-          return Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: stores
-                .map((partner) => SizedBox(
-                    width: width,
-                    child: _StoreAdminCard(cubit: cubit, partner: partner)))
-                .toList(),
-          );
-        }),
-      ]);
+  Widget build(BuildContext context) {
+    // Store management shows the active roster only — a soft-deleted
+    // (isActive: false) store disappears from here immediately, matching
+    // "Delete", while it remains fully intact in the backend and still
+    // shows up in Settlements/history (which lists every store regardless
+    // of isActive) for audit purposes.
+    final activeStores = stores.where((store) => store.isActive).toList();
+    return _AdminPage(children: [
+      _PageTitle(
+          title: 'إدارة المحلات',
+          subtitle: 'المحل الحصري ونسبة العمولة ومعلومات الظهور',
+          action: FilledButton.icon(
+              onPressed: () => _create(context),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('إضافة محل'))),
+      const SizedBox(height: 18),
+      LayoutBuilder(builder: (context, constraints) {
+        final width = constraints.maxWidth >= 900
+            ? (constraints.maxWidth - 24) / 3
+            : constraints.maxWidth >= 560
+                ? (constraints.maxWidth - 12) / 2
+                : constraints.maxWidth;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: activeStores
+              .map((partner) => SizedBox(
+                  width: width,
+                  child: _StoreAdminCard(
+                      cubit: cubit, partner: partner, repository: repository)))
+              .toList(),
+        );
+      }),
+    ]);
+  }
 
   Future<void> _create(BuildContext context) async {
-    final created = await _showStoreEditor(context);
+    final created = await _showStoreEditor(context, repository: repository);
     if (created != null) await cubit.createStore(created);
   }
 }
 
-class _StoreAdminCard extends StatelessWidget {
-  const _StoreAdminCard({required this.cubit, required this.partner});
+class _StoreAdminCard extends StatefulWidget {
+  const _StoreAdminCard({
+    required this.cubit,
+    required this.partner,
+    required this.repository,
+  });
 
   final AdminAppCubit cubit;
   final PartnerStore partner;
+  final YallaCashRepository repository;
+
+  @override
+  State<_StoreAdminCard> createState() => _StoreAdminCardState();
+}
+
+class _StoreAdminCardState extends State<_StoreAdminCard> {
+  // Guards against a double tap firing two delete requests while the first
+  // is still in flight.
+  bool _deleting = false;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -1815,60 +1849,134 @@ class _StoreAdminCard extends StatelessWidget {
                 CircleAvatar(child: Icon(AdminSection.stores.icon)),
                 const SizedBox(width: 10),
                 Expanded(
-                    child: Text(partner.name,
+                    child: Text(widget.partner.name,
                         style: const TextStyle(fontWeight: FontWeight.w900))),
-                Chip(label: Text('${partner.commissionRate}%'))
+                Chip(label: Text('${widget.partner.commissionRate}%'))
               ]),
               const SizedBox(height: 10),
-              Text(partner.category,
+              Text(widget.partner.category,
                   style: TextStyle(
                       color: Theme.of(context).colorScheme.primary,
                       fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               Text(
-                  partner.description.isEmpty
+                  widget.partner.description.isEmpty
                       ? 'لا يوجد وصف'
-                      : partner.description,
+                      : widget.partner.description,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis),
               const SizedBox(height: 6),
-              Text(partner.location,
+              Text(widget.partner.location,
                   style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 14),
-              SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                      onPressed: () => _edit(context),
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text('تعديل'))),
+              Row(children: [
+                Expanded(
+                    child: OutlinedButton.icon(
+                        onPressed: _deleting ? null : () => _edit(context),
+                        icon: const Icon(Icons.edit_outlined),
+                        label: const Text('تعديل'))),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: OutlinedButton.icon(
+                        onPressed: _deleting ? null : _delete,
+                        icon: _deleting
+                            ? SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Theme.of(context).colorScheme.error))
+                            : Icon(Icons.delete_outline_rounded,
+                                color: Theme.of(context).colorScheme.error),
+                        label: Text('حذف',
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error)))),
+              ]),
             ],
           ),
         ),
       );
 
   Future<void> _edit(BuildContext context) async {
-    final updated = await _showStoreEditor(context, partner: partner);
-    if (updated != null) await cubit.updateStore(updated);
+    final updated = await _showStoreEditor(context,
+        partner: widget.partner, repository: widget.repository);
+    if (updated != null) await widget.cubit.updateStore(updated);
+  }
+
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('حذف المتجر'),
+        content: const Text(
+            'هل أنت متأكد من حذف هذا المتجر؟ سيختفي من التطبيق ولن يتم حذف السجلات والعمليات السابقة.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('حذف المتجر')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    // No optimistic removal: the card stays exactly as-is until the backend
+    // confirms success and the cubit's refresh() re-fetches the real store
+    // list — only then does the (now-filtered) list stop showing it.
+    setState(() => _deleting = true);
+    final success = await widget.cubit.deleteStore(widget.partner);
+    if (!mounted) return;
+    setState(() => _deleting = false);
+
+    if (!success) {
+      final message = widget.cubit.state.failure?.message;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message == null || message.isEmpty
+              ? 'تعذر حذف المتجر.'
+              : message)));
+    }
   }
 }
 
 Future<PartnerStore?> _showStoreEditor(
   BuildContext context, {
+  required YallaCashRepository repository,
   PartnerStore? partner,
-}) {
+}) async {
+  // Governorate selection is required for every store, so the current
+  // governorate list is fetched fresh each time the editor opens — the same
+  // approach BannersAdmin already uses for its own governorate dropdown.
+  List<Governorate> governorates;
+  try {
+    governorates = (await repository.listAdminGovernorates()).toList()
+      ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+  } on Object {
+    governorates = const [];
+  }
+  if (!context.mounted) return null;
+  if (governorates.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تعذر تحميل قائمة المحافظات. حاول مرة أخرى.')));
+    return null;
+  }
   // The editor dialog owns its TextEditingControllers and builds the
   // resulting PartnerStore itself; no controller outlives the dialog route.
   return showDialog<PartnerStore>(
     context: context,
-    builder: (_) => _StoreEditorDialog(partner: partner),
+    builder: (_) =>
+        _StoreEditorDialog(partner: partner, governorates: governorates),
   );
 }
 
 /// Create/edit store prompt. Owns its TextEditingController lifecycle.
 class _StoreEditorDialog extends StatefulWidget {
-  const _StoreEditorDialog({this.partner});
+  const _StoreEditorDialog({required this.governorates, this.partner});
 
   final PartnerStore? partner;
+  final List<Governorate> governorates;
 
   @override
   State<_StoreEditorDialog> createState() => _StoreEditorDialogState();
@@ -1882,6 +1990,21 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
   late final location = TextEditingController(text: widget.partner?.location);
   late final description =
       TextEditingController(text: widget.partner?.description);
+  // Pre-selects the store's current governorate when editing (existing
+  // stores show إدلب after the migration backfill); null only for a brand
+  // new store, which the admin must explicitly choose before saving.
+  String? governorateChoice;
+  String? governorateError;
+
+  @override
+  void initState() {
+    super.initState();
+    final currentId = widget.partner?.governorateId;
+    governorateChoice = widget.governorates
+        .any((governorate) => governorate.id == currentId)
+        ? currentId
+        : null;
+  }
 
   @override
   void dispose() {
@@ -1894,6 +2017,11 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
   }
 
   void _save() {
+    final selectedGovernorateId = governorateChoice;
+    if (selectedGovernorateId == null) {
+      setState(() => governorateError = 'اختر المحافظة قبل الحفظ.');
+      return;
+    }
     final now = DateTime.now().microsecondsSinceEpoch;
     Navigator.pop(
       context,
@@ -1906,6 +2034,7 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
         description: description.text.trim(),
         location: location.text.trim(),
         iconSeed: widget.partner?.iconSeed ?? now.remainder(100000),
+        governorateId: selectedGovernorateId,
         isActive: widget.partner?.isActive ?? true,
       ),
     );
@@ -1940,6 +2069,23 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
                   controller: description,
                   maxLines: 3,
                   decoration: const InputDecoration(labelText: 'الوصف')),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: governorateChoice,
+                decoration: InputDecoration(
+                  labelText: 'المحافظة',
+                  errorText: governorateError,
+                ),
+                items: widget.governorates
+                    .map((governorate) => DropdownMenuItem(
+                        value: governorate.id,
+                        child: Text(governorate.nameAr)))
+                    .toList(),
+                onChanged: (value) => setState(() {
+                  governorateChoice = value;
+                  governorateError = null;
+                }),
+              ),
             ]),
           ),
         ),

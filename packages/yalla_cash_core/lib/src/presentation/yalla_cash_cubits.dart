@@ -727,6 +727,11 @@ class AdminAppCubit extends Cubit<AdminAppState> {
         await refresh();
       });
 
+  Future<bool> deleteStore(PartnerStore store) => _run(() async {
+        await _repository.deleteStore(store.id);
+        await refresh();
+      });
+
   Future<bool> createProduct(DigitalProduct product) => _run(() async {
         await _repository.createProduct(product);
         await refresh();

@@ -140,6 +140,7 @@ class PartnerStore {
     required this.description,
     required this.location,
     required this.iconSeed,
+    required this.governorateId,
     this.isActive = true,
   });
 
@@ -150,6 +151,7 @@ class PartnerStore {
   final String description;
   final String location;
   final int iconSeed;
+  final String governorateId;
   final bool isActive;
 
   PartnerStore copyWith({
@@ -159,6 +161,7 @@ class PartnerStore {
     String? description,
     String? location,
     int? iconSeed,
+    String? governorateId,
     bool? isActive,
   }) =>
       PartnerStore(
@@ -169,6 +172,7 @@ class PartnerStore {
         description: description ?? this.description,
         location: location ?? this.location,
         iconSeed: iconSeed ?? this.iconSeed,
+        governorateId: governorateId ?? this.governorateId,
         isActive: isActive ?? this.isActive,
       );
 }

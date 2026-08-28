@@ -524,6 +524,11 @@ class RemoteYallaCashRepository implements YallaCashRepository {
           body: _storeToApi(store))));
 
   @override
+  Future<void> deleteStore(String storeId) async {
+    await _client.delete('/admin/stores/$storeId');
+  }
+
+  @override
   Future<List<DigitalProduct>> listAdminProducts() async =>
       apiItems(await _client.get('/admin/products'))
           .map(_productFromApi)
@@ -686,6 +691,7 @@ class RemoteYallaCashRepository implements YallaCashRepository {
         location:
             (json['location'] as String?) ?? (json['city'] as String?) ?? '',
         iconSeed: _int(json['iconSeed'] ?? 0),
+        governorateId: json['governorateId']! as String,
         isActive: json['isActive'] as bool? ?? true,
       );
 
@@ -800,6 +806,7 @@ class RemoteYallaCashRepository implements YallaCashRepository {
         'location': store.location,
         'iconSeed': store.iconSeed,
         'isActive': store.isActive,
+        'governorateId': store.governorateId,
       };
 
   Map<String, Object?> _productToApi(DigitalProduct product) => {

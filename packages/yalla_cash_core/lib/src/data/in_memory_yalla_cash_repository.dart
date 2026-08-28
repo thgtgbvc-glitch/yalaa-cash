@@ -442,6 +442,11 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   }
 
   @override
+  Future<void> deleteStore(String storeId) async {
+    _store.deleteStore(storeId);
+  }
+
+  @override
   Future<List<DigitalProduct>> listAdminProducts() async =>
       _store.products.toList(growable: false);
 
