@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:yalla_cash_core/src/config/yalla_cash_environment.dart';
 import 'package:yalla_cash_core/src/core/failure.dart';
@@ -25,6 +26,12 @@ class YallaCashApiClient {
     if (_memoryTokens != null) return _memoryTokens;
     _memoryTokens = await _tokenStore.read();
     return _memoryTokens;
+  }
+
+  Future<bool> hasSavedSession() async {
+    final saved = await tokens;
+    return saved != null &&
+        (saved.accessToken.isNotEmpty || saved.refreshToken.isNotEmpty);
   }
 
   Future<void> saveTokens(AuthTokens tokens) async {
@@ -158,6 +165,7 @@ class YallaCashApiClient {
   }
 
   Future<bool> _performRefresh() async {
+    final stopwatch = Stopwatch()..start();
     final saved = await tokens;
     if (saved == null) return false;
     try {
@@ -171,6 +179,11 @@ class YallaCashApiClient {
       // Persist the rotated pair BEFORE returning so every waiter retries
       // with the fresh access token.
       await saveTokens(newTokens);
+      if (kDebugMode) {
+        debugPrint(
+          'CUSTOMER_STARTUP token_refresh_ms=${stopwatch.elapsedMilliseconds}',
+        );
+      }
       return true;
     } on Object {
       // The refresh attempt failed (invalid/expired refresh token or an
@@ -178,6 +191,11 @@ class YallaCashApiClient {
       // stored session, exactly once; concurrent waiters simply observe
       // `false` and let their original 401 surface to the caller.
       await clearTokens();
+      if (kDebugMode) {
+        debugPrint(
+          'CUSTOMER_STARTUP token_refresh_failed_ms=${stopwatch.elapsedMilliseconds}',
+        );
+      }
       return false;
     }
   }

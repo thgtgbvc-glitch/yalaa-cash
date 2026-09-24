@@ -10,6 +10,9 @@ class InMemoryYallaCashRepository implements YallaCashRepository {
   final YallaCashStore _store;
 
   @override
+  Future<bool> hasSavedSession() async => _store.currentCustomer != null;
+
+  @override
   Future<PhoneOtpChallenge> startCustomerPhoneOtp(String phone) async =>
       const PhoneOtpChallenge(
         challengeId: 'demo-otp',

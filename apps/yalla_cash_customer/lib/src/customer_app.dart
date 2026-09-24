@@ -1,16 +1,24 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:yalla_cash_core/yalla_cash_core.dart' hide Banner;
 
 class YallaCashCustomerApp extends StatefulWidget {
-  const YallaCashCustomerApp({super.key, this.store, this.runtime});
+  const YallaCashCustomerApp({
+    super.key,
+    this.store,
+    this.runtime,
+    this.firebaseInitialization,
+  });
 
   final YallaCashStore? store;
   final YallaCashRuntime? runtime;
+  final Future<void>? firebaseInitialization;
 
   @override
   State<YallaCashCustomerApp> createState() => _YallaCashCustomerAppState();
@@ -92,6 +100,7 @@ class _YallaCashCustomerAppState extends State<YallaCashCustomerApp>
                   ? CustomerAuthScreen(
                       cubit: customerCubit,
                       state: state,
+                      firebaseInitialization: widget.firebaseInitialization,
                       showDemoLogin: widget.store != null,
                       onDemoLogin: _loginDemoCustomer,
                     )
@@ -120,6 +129,7 @@ class CustomerAuthScreen extends StatefulWidget {
   const CustomerAuthScreen({
     required this.cubit,
     required this.state,
+    this.firebaseInitialization,
     this.showDemoLogin = false,
     this.onDemoLogin,
     super.key,
@@ -127,6 +137,7 @@ class CustomerAuthScreen extends StatefulWidget {
 
   final CustomerAppCubit cubit;
   final CustomerAppState state;
+  final Future<void>? firebaseInitialization;
   final bool showDemoLogin;
   final VoidCallback? onDemoLogin;
 
@@ -448,6 +459,10 @@ class _CustomerAuthScreenState extends State<CustomerAuthScreen>
       errorMessage = null;
     });
     try {
+      await (widget.firebaseInitialization ?? Firebase.initializeApp());
+      if (Firebase.apps.isEmpty) {
+        throw StateError('Firebase initialization is unavailable.');
+      }
       final googleUser = await GoogleSignIn().signIn();
       if (googleUser == null) {
         // User cancelled the account picker — not an error.
@@ -764,6 +779,7 @@ class _CustomerGovernorateGateState extends State<CustomerGovernorateGate> {
   }
 
   Future<void> _load() async {
+    final stopwatch = Stopwatch()..start();
     try {
       final items = await widget.repository.listActiveGovernorates();
       final selectedId = widget.state.customer?.governorateId;
@@ -774,6 +790,11 @@ class _CustomerGovernorateGateState extends State<CustomerGovernorateGate> {
         loading = false;
         error = null;
       });
+      if (kDebugMode) {
+        debugPrint(
+          'CUSTOMER_STARTUP governorate_validation_ms=${stopwatch.elapsedMilliseconds}',
+        );
+      }
       if (selectedId != null &&
           governorates.any((item) => item.id == selectedId)) {
         return;
@@ -812,9 +833,10 @@ class _CustomerGovernorateGateState extends State<CustomerGovernorateGate> {
   @override
   Widget build(BuildContext context) {
     final selectedId = widget.state.customer?.governorateId;
+    final hasProfileGovernorate = selectedId != null && selectedId.isNotEmpty;
     final validSelection =
         selectedId != null && governorates.any((item) => item.id == selectedId);
-    if (validSelection) {
+    if (validSelection || (loading && hasProfileGovernorate)) {
       return CustomerShell(
         cubit: widget.cubit,
         state: widget.state,
@@ -1116,9 +1138,6 @@ class CustomerHomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final points = state.points;
-    final displayCustomer =
-        customer.copyWith(pointsBalance: points?.pointsBalance);
-    final held = points?.heldPoints ?? 0;
     final stores =
         state.stores.where((store) => store.isActive).toList(growable: false);
     final banners = state.banners;
@@ -1129,7 +1148,7 @@ class CustomerHomePage extends StatelessWidget {
       key: const PageStorageKey('customer-home'),
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
       children: [
-        _BalanceCard(customer: displayCustomer, heldPoints: held),
+        _BalanceCard(points: points),
         const SizedBox(height: 18),
         if (banners.isNotEmpty)
           SizedBox(
@@ -1228,10 +1247,9 @@ class CustomerHomePage extends StatelessWidget {
 }
 
 class _BalanceCard extends StatelessWidget {
-  const _BalanceCard({required this.customer, required this.heldPoints});
+  const _BalanceCard({required this.points});
 
-  final Customer customer;
-  final int heldPoints;
+  final PointsSummary? points;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1276,15 +1294,25 @@ class _BalanceCard extends StatelessWidget {
                 const Text('رصيد النقاط',
                     style: TextStyle(color: Colors.white70)),
                 const SizedBox(height: 4),
-                Text(
-                  formatNumber(customer.pointsBalance),
-                  style: const TextStyle(
+                if (points == null)
+                  const SizedBox(
+                    width: 112,
+                    child: LinearProgressIndicator(
+                      minHeight: 8,
                       color: Colors.white,
-                      fontSize: 38,
-                      fontWeight: FontWeight.w900),
-                ),
-                if (heldPoints > 0)
-                  Text('منها ${formatNumber(heldPoints)} نقطة قيد المعالجة',
+                      backgroundColor: Colors.white24,
+                    ),
+                  )
+                else
+                  Text(
+                    formatNumber(points!.pointsBalance),
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 38,
+                        fontWeight: FontWeight.w900),
+                  ),
+                if (points != null && points!.heldPoints > 0)
+                  Text('منها ${formatNumber(points!.heldPoints)} نقطة قيد المعالجة',
                       style:
                           const TextStyle(color: Colors.white70, fontSize: 12)),
               ],

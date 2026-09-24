@@ -145,6 +145,8 @@ class IssuedMerchantAccount {
 
 abstract class YallaCashRepository {
   Future<PhoneOtpChallenge> startCustomerPhoneOtp(String phone);
+  Future<bool> hasSavedSession();
+
 
   Future<AuthSession> verifyCustomerPhoneOtp({
     required String challengeId,

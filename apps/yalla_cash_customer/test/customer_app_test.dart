@@ -4,6 +4,23 @@ import 'package:yalla_cash_core/yalla_cash_core.dart';
 import 'package:yalla_cash_customer/src/customer_app.dart';
 
 void main() {
+  testWidgets('balance loading state does not display a false zero',
+      (tester) async {
+    final store = YallaCashStore.demo()..loginDemoCustomer();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CustomerHomePage(
+          state: const CustomerAppState(),
+          customer: store.currentCustomer!,
+        ),
+      ),
+    );
+
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+  });
+
   testWidgets('customer app hides demo shortcut without injected store',
       (tester) async {
     final runtime = YallaCashRuntime.fromEnvironment();

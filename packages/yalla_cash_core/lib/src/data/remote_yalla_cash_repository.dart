@@ -8,6 +8,9 @@ class RemoteYallaCashRepository implements YallaCashRepository {
   final YallaCashApiClient _client;
 
   @override
+  Future<bool> hasSavedSession() => _client.hasSavedSession();
+
+  @override
   Future<PhoneOtpChallenge> startCustomerPhoneOtp(String phone) async {
     final json = apiMap(
       await _client.post(

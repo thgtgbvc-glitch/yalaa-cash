@@ -6,10 +6,22 @@ import 'package:yalla_cash_customer/src/customer_app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Reads android/app/google-services.json via the Google Services Gradle
-  // plugin; no explicit FirebaseOptions needed for the Android-only build.
-  // Still required here for Firebase Auth / Google Sign-In.
-  await Firebase.initializeApp();
+  final startupStopwatch = Stopwatch()..start();
+  final firebaseInitialization = () async {
+    try {
+      await Firebase.initializeApp();
+      if (kDebugMode) {
+        debugPrint(
+          'CUSTOMER_STARTUP firebase_initialized_ms=${startupStopwatch.elapsedMilliseconds}',
+        );
+      }
+    } on Object catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('CUSTOMER_STARTUP firebase_initialization_failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+  }();
   // Release builds must pin the SHARED backend explicitly via
   // --dart-define=YALLA_CASH_API_BASE_URL=... Debug/local runs fall back to
   // the platform-aware default from YallaCashEnvironment (localhost:3000,
@@ -24,5 +36,17 @@ void main() async {
   final runtime = YallaCashRuntime.fromEnvironment(
     environment: YallaCashEnvironment.fromEnvironment(useRemoteBackend: true),
   );
-  runApp(YallaCashCustomerApp(runtime: runtime));
+  runApp(
+    YallaCashCustomerApp(
+      runtime: runtime,
+      firebaseInitialization: firebaseInitialization,
+    ),
+  );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (kDebugMode) {
+      debugPrint(
+        'CUSTOMER_STARTUP first_flutter_frame_ms=${startupStopwatch.elapsedMilliseconds}',
+      );
+    }
+  });
 }

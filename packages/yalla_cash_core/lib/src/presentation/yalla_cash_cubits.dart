@@ -111,22 +111,36 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
   final YallaCashRepository _repository;
 
   Future<void> restoreSession() async {
+    final localLookupStopwatch = Stopwatch()..start();
     try {
       emit(state.copyWith(status: LoadStatus.loading, failure: null));
-      final results = await _loadCustomerData();
-      emit(
-        state.copyWith(
-          status: LoadStatus.success,
-          customer: results[0] as Customer,
-          points: results[1] as PointsSummary,
-          stores: results[2] as List<PartnerStore>,
-          transactions: results[3] as List<LoyaltyTransaction>,
-          products: results[4] as List<DigitalProduct>,
-          cashRequests: results[5] as List<CashRedemptionRequest>,
-          banners: results[6] as List<Banner>,
-          failure: null,
-        ),
-      );
+      final hasSavedSession = await _repository.hasSavedSession();
+      if (kDebugMode) {
+        debugPrint(
+          'CUSTOMER_STARTUP local_session_lookup_ms=${localLookupStopwatch.elapsedMilliseconds} has_session=$hasSavedSession',
+        );
+      }
+      if (!hasSavedSession) {
+        emit(const CustomerAppState());
+        return;
+      }
+
+      final profileStopwatch = Stopwatch()..start();
+      final customer = await _repository.getCustomerProfile();
+      if (kDebugMode) {
+        debugPrint(
+          'CUSTOMER_STARTUP profile_request_ms=${profileStopwatch.elapsedMilliseconds}',
+        );
+      }
+      emit(state.copyWith(
+        status: LoadStatus.success,
+        customer: customer,
+        failure: null,
+      ));
+      if (kDebugMode) {
+        debugPrint('CUSTOMER_STARTUP secondary_data_kicked_off');
+      }
+      unawaited(_loadSecondaryStartupData());
     } on YallaCashFailure catch (failure) {
       if (failure.statusCode == 401 || failure.code == 'unauthorized') {
         // Invalid/expired session -> clean logout state (intentional).
@@ -275,6 +289,36 @@ class CustomerAppCubit extends Cubit<CustomerAppState> {
         _repository.listCustomerCashRequests(),
         _repository.listActiveBanners(placement: 'HOME'),
       ]);
+
+  Future<void> _loadSecondaryStartupData() async {
+    try {
+      final results = await Future.wait<Object>([
+        _repository.getCustomerPoints(),
+        _repository.listActiveStores(),
+        _repository.listCustomerTransactions(),
+        _repository.listDigitalProducts(),
+        _repository.listCustomerCashRequests(),
+        _repository.listActiveBanners(placement: 'HOME'),
+      ]);
+      emit(state.copyWith(
+        status: LoadStatus.success,
+        points: results[0] as PointsSummary,
+        stores: results[1] as List<PartnerStore>,
+        transactions: results[2] as List<LoyaltyTransaction>,
+        products: results[3] as List<DigitalProduct>,
+        cashRequests: results[4] as List<CashRedemptionRequest>,
+        banners: results[5] as List<Banner>,
+        failure: null,
+      ));
+    } on YallaCashFailure catch (failure) {
+      emit(state.copyWith(status: LoadStatus.failure, failure: failure));
+    } on Object catch (error, stackTrace) {
+      emit(state.copyWith(
+        status: LoadStatus.failure,
+        failure: _unexpectedFailure(error, stackTrace),
+      ));
+    }
+  }
 
   Future<void> _run(Future<void> Function() action) async {
     try {
